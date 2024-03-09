@@ -9,13 +9,13 @@ contract ProofRegistry {
         FINALISED
     }
 
-    struct ProofWitness {
+    struct ProofVerificationClaim {
         bool isValid;
         address verifiedBy;
         uint verificationTimestamp;
     }
 
-    struct ClaimData {
+    struct RewardData {
         uint256 reward;
         // token address(0x0) is considered as ETH
         ERC20 token;
@@ -27,9 +27,9 @@ contract ProofRegistry {
     mapping(address => bool) public canVote;
     // proof => (is proof valid, address of the validator that voted, timestamp that they voted)
     // address(0x0) and timestamp = 0, indicate that the proof was verified on-chain
-    mapping(bytes => ProofWitness) public isValidProof;
-    // proof => address of validator that voted => (bid for verifying the proof, finalisation timestamp of proof)
-    mapping(bytes => mapping(address => ClaimData)) public claims;
+    mapping(bytes => ProofVerificationClaim) public isValidProof;
+    // proof => address of validator that voted => (reward for verifying the proof, finalisation timestamp of proof)
+    mapping(bytes => mapping(address => RewardData)) public claims;
 
     constructor(uint challengePeriod) {
         CHALLENGE_PERIOD = challengePeriod;
@@ -40,7 +40,7 @@ contract ProofRegistry {
         address proofVerifier = msg.sender;
 
         if (canVote[proofVerifier]) {
-            isValidProof[proof] = ProofWitness({
+            isValidProof[proof] = ProofVerificationClaim({
                 isValid: isValid,
                 verifiedBy: proofVerifier,
                 verificationTimestamp: block.timestamp
@@ -48,7 +48,7 @@ contract ProofRegistry {
         }
     }
 
-    function verifyERC20(bytes calldata proof, ERC20 token, uint reward) external payable {
+    function verifyERC20(bytes calldata proof, ERC20 token, uint reward) external payable returns (bool, PROOF_STATUS) {
         if (
             isValidProof[proof].verifiedBy == address(0x0) &&
             isValidProof[proof].verificationTimestamp == 0
@@ -56,7 +56,7 @@ contract ProofRegistry {
             IVerifier verifier = getProofVerificationContract(proof);
             bool isValid = verifier.verify(proof);
 
-            isValidProof[proof] = ProofWitness({
+            isValidProof[proof] = ProofVerificationClaim({
                 isValid: isValid,
                 verifiedBy: address(0),
                 verificationTimestamp: 0
@@ -67,11 +67,10 @@ contract ProofRegistry {
             // Escrow the token from the prover in the ProofRegistry
             token.transferFrom(msg.sender, address(this), reward);
 
-            ProofWitness memory proofWitness = isValidProof[proof];
+            ProofVerificationClaim memory proofWitness = isValidProof[proof];
             bool originalProofVote = proofWitness.isValid;
             address originalVerifier = proofWitness.verifiedBy;
-            uint originalVerificationTimestamp = proofWitness
-                .verificationTimestamp;
+            uint originalVerificationTimestamp = proofWitness.verificationTimestamp;
 
             if (
                 originalVerifier == address(0x0) &&
@@ -84,7 +83,8 @@ contract ProofRegistry {
             ) {
                 return (originalProofVote, PROOF_STATUS.FINALISED);
             } else {
-                claims[proof][originalVerifier] = ClaimData({
+                claims[proof][originalVerifier] = RewardData
+          ({
                     reward: reward,
                     token: token,
                     finalisationTimestamp: originalVerificationTimestamp +
@@ -103,13 +103,13 @@ contract ProofRegistry {
             isValidProof[proof].verifiedBy == address(0x0) &&
             isValidProof[proof].verificationTimestamp == 0
         ) {
-            // return the bid since no one took the mev opportunity
+            // return the bid since no one verified the proof
             payable(msg.sender).transfer(reward);
 
             IVerifier verifier = getProofVerificationContract(proof);
             bool isValid = verifier.verify(proof);
 
-            isValidProof[proof] = ProofWitness({
+            isValidProof[proof] = ProofVerificationClaim({
                 isValid: isValid,
                 verifiedBy: address(0),
                 verificationTimestamp: 0
@@ -117,7 +117,7 @@ contract ProofRegistry {
 
             return (isValid, PROOF_STATUS.FINALISED);
         } else {
-            ProofWitness memory proofWitness = isValidProof[proof];
+            ProofVerificationClaim memory proofWitness = isValidProof[proof];
             bool originalProofVote = proofWitness.isValid;
             address originalVerifier = proofWitness.verifiedBy;
             uint originalVerificationTimestamp = proofWitness
@@ -134,9 +134,10 @@ contract ProofRegistry {
             ) {
                 return (originalProofVote, PROOF_STATUS.FINALISED);
             } else {
-                claims[proof][originalVerifier] = ClaimData({
+                claims[proof][originalVerifier] = RewardData
+          ({
                     reward: reward,
-                    token: address(0x0),
+                    token: ERC20(address(0x0)),
                     finalisationTimestamp: originalVerificationTimestamp +
                         CHALLENGE_PERIOD
                 });
@@ -175,7 +176,7 @@ contract ProofRegistry {
 
         if (challengerVote != originalProofVote) {
             // Original proposer lied about the verification of the proof
-            isValidProof[proof] = ProofWitness({
+            isValidProof[proof] = ProofVerificationClaim({
                 isValid: challengerVote,
                 verifiedBy: address(0),
                 verificationTimestamp: 0
@@ -206,7 +207,7 @@ contract ProofRegistry {
         }
 
         // collect bid for verifying proof off-chain
-        if (token != address(0x0)) {
+        if (token != ERC20(address(0x0))) {
             token.transfer(msg.sender, bid);
         } else {
           payable(msg.sender).transfer(bid);
