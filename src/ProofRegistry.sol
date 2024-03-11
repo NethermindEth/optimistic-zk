@@ -26,7 +26,7 @@ contract ProofRegistry {
     // Only opt-ed Ethereum validators can vote on the verification
     mapping(address => bool) public canVote;
     // proof => (is proof valid, address of the validator that voted, timestamp that they voted)
-    // address(0x0) and timestamp = 0, indicate that the proof was verified on-chain
+    // address(0x1) and timestamp = 1, indicate that the proof was verified on-chain
     mapping(bytes => ProofVerificationClaim) public isValidProof;
     // proof => address of validator that voted => (reward for verifying the proof, finalisation timestamp of proof)
     mapping(bytes => mapping(address => RewardData)) public claims;
@@ -64,33 +64,34 @@ contract ProofRegistry {
 
             return (isValid, PROOF_STATUS.FINALISED);
         } else {
-            // Escrow the token from the prover in the ProofRegistry
+            // Escrow the reward in ERC20 token from the prover in the ProofRegistry
             token.transferFrom(msg.sender, address(this), reward);
 
             ProofVerificationClaim memory proofWitness = isValidProof[proof];
-            bool originalProofVote = proofWitness.isValid;
-            address originalVerifier = proofWitness.verifiedBy;
-            uint originalVerificationTimestamp = proofWitness.verificationTimestamp;
+            (bool isValid, address verifiedBy, uint verificationTimestamp) = (
+                proofWitness.isValid,
+                proofWitness.verifiedBy,
+                proofWitness.verificationTimestamp
+            );
 
             if (
-                originalVerifier == address(0x0) &&
-                originalVerificationTimestamp == 0
+                verifiedBy == address(0x1) &&
+                verificationTimestamp == 1
             ) {
-                return (originalProofVote, PROOF_STATUS.FINALISED);
+                return (isValid, PROOF_STATUS.FINALISED);
             } else if (
                 block.timestamp >=
-                originalVerificationTimestamp + CHALLENGE_PERIOD
+                    verificationTimestamp + CHALLENGE_PERIOD
             ) {
-                return (originalProofVote, PROOF_STATUS.FINALISED);
+                return (isValid, PROOF_STATUS.FINALISED);
             } else {
-                claims[proof][originalVerifier] = RewardData
-          ({
+                claims[proof][verifiedBy] = RewardData({
                     reward: reward,
                     token: token,
-                    finalisationTimestamp: originalVerificationTimestamp +
+                    finalisationTimestamp: verificationTimestamp +
                         CHALLENGE_PERIOD
                 });
-                return (originalProofVote, PROOF_STATUS.RECEIVED);
+                return (isValid, PROOF_STATUS.RECEIVED);
             }
         }
     }
@@ -103,7 +104,7 @@ contract ProofRegistry {
             isValidProof[proof].verifiedBy == address(0x0) &&
             isValidProof[proof].verificationTimestamp == 0
         ) {
-            // return the bid since no one verified the proof
+            // return the bid since no record for the proof in the registry
             payable(msg.sender).transfer(reward);
 
             IVerifier verifier = getProofVerificationContract(proof);
@@ -118,51 +119,58 @@ contract ProofRegistry {
             return (isValid, PROOF_STATUS.FINALISED);
         } else {
             ProofVerificationClaim memory proofWitness = isValidProof[proof];
-            bool originalProofVote = proofWitness.isValid;
-            address originalVerifier = proofWitness.verifiedBy;
-            uint originalVerificationTimestamp = proofWitness
-                .verificationTimestamp;
+            (bool isValid, address verifiedBy, uint verificationTimestamp) = (
+                proofWitness.isValid,
+                proofWitness.verifiedBy,
+                proofWitness.verificationTimestamp
+            );
 
             if (
-                originalVerifier == address(0x0) &&
-                originalVerificationTimestamp == 0
+                verifiedBy == address(0x1) &&
+                verificationTimestamp == 1
             ) {
-                return (originalProofVote, PROOF_STATUS.FINALISED);
+                return (isValid, PROOF_STATUS.FINALISED);
             } else if (
                 block.timestamp >=
-                originalVerificationTimestamp + CHALLENGE_PERIOD
+                    verificationTimestamp + CHALLENGE_PERIOD
             ) {
-                return (originalProofVote, PROOF_STATUS.FINALISED);
+                return (isValid, PROOF_STATUS.FINALISED);
             } else {
-                claims[proof][originalVerifier] = RewardData
-          ({
+                claims[proof][verifiedBy] = RewardData({
                     reward: reward,
                     token: ERC20(address(0x0)),
-                    finalisationTimestamp: originalVerificationTimestamp +
+                    finalisationTimestamp: verificationTimestamp +
                         CHALLENGE_PERIOD
                 });
-                return (originalProofVote, PROOF_STATUS.RECEIVED);
+                return (isValid, PROOF_STATUS.RECEIVED);
             }
         }
     }
 
     function challenge(bytes calldata proof) external {
-        if (
-            isValidProof[proof].verifiedBy == address(0x0) &&
-            isValidProof[proof].verificationTimestamp == 0
-        ) {
-            revert("No past vote");
-        }
-
+        ProofVerificationClaim memory proofWitness = isValidProof[proof];
         (
             bool originalProofVote,
             address originalVerifier,
             uint originalVerificationTimestamp
         ) = (
-                isValidProof[proof].isValid,
-                isValidProof[proof].verifiedBy,
-                isValidProof[proof].verificationTimestamp
+                proofWitness.isValid,
+                proofWitness.verifiedBy,
+                proofWitness.verificationTimestamp
             );
+
+        if (
+            originalVerifier == address(0x0) && originalVerificationTimestamp == 0
+        ) {
+            revert("No past vote");
+        }
+
+        if (
+            originalVerifier == address(0x1) && originalVerificationTimestamp == 1
+        ) {
+            revert("Proof was verified on-chain, cannot be challenged");
+        }
+
         if (
             block.timestamp > CHALLENGE_PERIOD + originalVerificationTimestamp
         ) {
@@ -174,6 +182,12 @@ contract ProofRegistry {
         bool challengerVote = verifier.verify(proof);
         address challengerAddress = msg.sender;
 
+        (uint bid, ERC20 token, uint finalisationTimestamp) = (
+            claims[proof][originalVerifier].reward,
+            claims[proof][originalVerifier].token,
+            claims[proof][originalVerifier].finalisationTimestamp
+        );
+
         if (challengerVote != originalProofVote) {
             // Original proposer lied about the verification of the proof
             isValidProof[proof] = ProofVerificationClaim({
@@ -182,7 +196,11 @@ contract ProofRegistry {
                 verificationTimestamp: 0
             });
             // Pay the challenger
-            payable(challengerAddress).transfer(claims[proof][originalVerifier].reward);
+            if (token != ERC20(address(0x0))) {
+                token.transfer(challengerAddress, bid);
+            } else {
+                payable(challengerAddress).transfer(bid);
+            }
             // Penalise the original verifier
             slash(originalVerifier);
         }
@@ -206,7 +224,7 @@ contract ProofRegistry {
             revert("proof not finalised");
         }
 
-        // collect bid for verifying proof off-chain
+        // collect reward for verifying proof off-chain
         if (token != ERC20(address(0x0))) {
             token.transfer(msg.sender, bid);
         } else {
