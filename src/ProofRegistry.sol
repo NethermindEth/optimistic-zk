@@ -24,12 +24,12 @@ contract ProofRegistry {
 
     uint public immutable CHALLENGE_PERIOD;
     // Only opt-ed Ethereum validators can vote on the verification
-    mapping(address => bool) public canVote;
+    mapping(address validator => bool) public canVote;
     // proof => (is proof valid, address of the validator that voted, timestamp that they voted)
     // address(0x1) and timestamp = 1, indicate that the proof was verified on-chain
-    mapping(bytes => ProofVerificationClaim) public isValidProof;
+    mapping(bytes proof => ProofVerificationClaim) public isValidProof;
     // proof => address of validator that voted => (reward for verifying the proof, finalisation timestamp of proof)
-    mapping(bytes => mapping(address => RewardData)) public claims;
+    mapping(bytes proof => mapping(address proofVerifier => RewardData)) public claims;
 
     constructor(uint challengePeriod) {
         CHALLENGE_PERIOD = challengePeriod;
@@ -182,10 +182,11 @@ contract ProofRegistry {
         bool challengerVote = verifier.verify(proof);
         address challengerAddress = msg.sender;
 
+        RewardData memory rewardData = claims[proof][originalVerifier];
         (uint bid, ERC20 token, uint finalisationTimestamp) = (
-            claims[proof][originalVerifier].reward,
-            claims[proof][originalVerifier].token,
-            claims[proof][originalVerifier].finalisationTimestamp
+            rewardData.reward,
+            rewardData.token,
+            rewardData.finalisationTimestamp
         );
 
         if (challengerVote != originalProofVote) {
