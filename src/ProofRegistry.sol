@@ -22,6 +22,8 @@ contract ProofRegistry {
         uint256 finalisationTimestamp;
     }
 
+    event ProofVerificationClaim(bytes proof, bool isValid, uint reward, ERC20 token, uint finalisationTimestamp);
+
     uint public immutable CHALLENGE_PERIOD;
     // Only opt-ed Ethereum validators can vote on the verification
     mapping(address validator => bool) public canVote;
@@ -62,6 +64,7 @@ contract ProofRegistry {
                 verificationTimestamp: 0
             });
 
+            emit ProofVerificationClaim(proof, isValid, reward, token, block.timestamp + CHALLENGE_PERIOD);
             return (isValid, PROOF_STATUS.FINALISED);
         } else {
             // Escrow the reward in ERC20 token from the prover in the ProofRegistry
@@ -116,6 +119,7 @@ contract ProofRegistry {
                 verificationTimestamp: 0
             });
 
+            emit ProofVerificationClaim(proof, isValid, reward, ERC20(address(0x0)), block.timestamp + CHALLENGE_PERIOD);
             return (isValid, PROOF_STATUS.FINALISED);
         } else {
             ProofVerificationClaim memory proofWitness = isValidProof[proof];
