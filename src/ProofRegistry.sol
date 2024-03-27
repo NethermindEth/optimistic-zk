@@ -22,7 +22,7 @@ contract ProofRegistry {
         uint256 finalisationTimestamp;
     }
 
-    event ProofVerificationClaimEvent(bytes32 proofHash, bool isValid, uint reward, ERC20 token, uint finalisationTimestamp);
+    event ProofVerificationClaimEvent(bytes32 proofHash, uint reward, ERC20 token, uint finalisationTimestamp);
 
     uint public immutable CHALLENGE_PERIOD;
     // Only opt-ed Ethereum validators can vote on the verification
@@ -196,22 +196,24 @@ contract ProofRegistry {
             rewardData.token
         );
 
-        if (challengerVote != originalProofVote) {
-            // Original proposer lied about the verification of the proof
-            isValidProof[proofHash] = ProofVerificationClaim({
-                isValid: challengerVote,
-                verifiedBy: address(0),
-                verificationTimestamp: 0
-            });
-            // Pay the challenger
-            if (token != ERC20(address(0x0))) {
-                token.transfer(challengerAddress, bid);
-            } else {
-                payable(challengerAddress).transfer(bid);
-            }
-            // Penalise the original verifier
-            slash(originalVerifier);
+        if (challengerVote == originalProofVote) {
+            revert("Challenger vote same as original verifier");
         }
+        
+        // Original proposer lied about the verification of the proof
+        isValidProof[proofHash] = ProofVerificationClaim({
+            isValid: challengerVote,
+            verifiedBy: address(0),
+            verificationTimestamp: 0
+        });
+        // Pay the challenger
+        if (token != ERC20(address(0x0))) {
+            token.transfer(challengerAddress, bid);
+        } else {
+            payable(challengerAddress).transfer(bid);
+        }
+        // Penalise the original verifier
+        slash(originalVerifier);
     }
 
     function claimReward(bytes calldata proof) external {
