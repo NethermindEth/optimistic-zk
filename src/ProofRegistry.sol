@@ -22,16 +22,16 @@ contract ProofRegistry {
         uint256 finalisationTimestamp;
     }
 
-    event ProofVerificationClaim(bytes proof, bool isValid, uint reward, ERC20 token, uint finalisationTimestamp);
+    event ProofVerificationClaimEvent(bytes32 proofHash, bool isValid, uint reward, ERC20 token, uint finalisationTimestamp);
 
     uint public immutable CHALLENGE_PERIOD;
     // Only opt-ed Ethereum validators can vote on the verification
     mapping(address validator => bool) public canVote;
     // proof => (is proof valid, address of the validator that voted, timestamp that they voted)
     // address(0x1) and timestamp = 1, indicate that the proof was verified on-chain
-    mapping(bytes proof => ProofVerificationClaim) public isValidProof;
+    mapping(bytes32 proofHash => ProofVerificationClaim) public isValidProof;
     // proof => address of validator that voted => (reward for verifying the proof, finalisation timestamp of proof)
-    mapping(bytes proof => mapping(address proofVerifier => RewardData)) public claims;
+    mapping(bytes32 proofHash => mapping(address proofVerifier => RewardData)) public claims;
 
     constructor(uint challengePeriod) {
         CHALLENGE_PERIOD = challengePeriod;
@@ -41,8 +41,9 @@ contract ProofRegistry {
     function voteValidProof(bytes calldata proof, bool isValid) external {
         address proofVerifier = msg.sender;
 
+        bytes32 proofHash = keccak256(proof);
         if (canVote[proofVerifier]) {
-            isValidProof[proof] = ProofVerificationClaim({
+            isValidProof[proofHash] = ProofVerificationClaim({
                 isValid: isValid,
                 verifiedBy: proofVerifier,
                 verificationTimestamp: block.timestamp
@@ -51,26 +52,27 @@ contract ProofRegistry {
     }
 
     function verifyERC20(bytes calldata proof, ERC20 token, uint reward) external payable returns (bool, PROOF_STATUS) {
+        bytes32 proofHash = keccak256(proof);
         if (
-            isValidProof[proof].verifiedBy == address(0x0) &&
-            isValidProof[proof].verificationTimestamp == 0
+            isValidProof[proofHash].verifiedBy == address(0x0) &&
+            isValidProof[proofHash].verificationTimestamp == 0
         ) {
             IVerifier verifier = getProofVerificationContract(proof);
             bool isValid = verifier.verify(proof);
 
-            isValidProof[proof] = ProofVerificationClaim({
+            isValidProof[proofHash] = ProofVerificationClaim({
                 isValid: isValid,
                 verifiedBy: address(0),
                 verificationTimestamp: 0
             });
 
-            emit ProofVerificationClaim(proof, isValid, reward, token, block.timestamp + CHALLENGE_PERIOD);
+            emit ProofVerificationClaimEvent(proofHash, isValid, reward, token, block.timestamp + CHALLENGE_PERIOD);
             return (isValid, PROOF_STATUS.FINALISED);
         } else {
             // Escrow the reward in ERC20 token from the prover in the ProofRegistry
             token.transferFrom(msg.sender, address(this), reward);
 
-            ProofVerificationClaim memory proofWitness = isValidProof[proof];
+            ProofVerificationClaim memory proofWitness = isValidProof[proofHash];
             (bool isValid, address verifiedBy, uint verificationTimestamp) = (
                 proofWitness.isValid,
                 proofWitness.verifiedBy,
@@ -88,7 +90,7 @@ contract ProofRegistry {
             ) {
                 return (isValid, PROOF_STATUS.FINALISED);
             } else {
-                claims[proof][verifiedBy] = RewardData({
+                claims[proofHash][verifiedBy] = RewardData({
                     reward: reward,
                     token: token,
                     finalisationTimestamp: verificationTimestamp +
@@ -103,9 +105,10 @@ contract ProofRegistry {
         bytes calldata proof
     ) external payable returns (bool, PROOF_STATUS) {
         uint reward = msg.value;
+        bytes32 proofHash = keccak256(proof);
         if (
-            isValidProof[proof].verifiedBy == address(0x0) &&
-            isValidProof[proof].verificationTimestamp == 0
+            isValidProof[proofHash].verifiedBy == address(0x0) &&
+            isValidProof[proofHash].verificationTimestamp == 0
         ) {
             // return the bid since no record for the proof in the registry
             payable(msg.sender).transfer(reward);
@@ -113,16 +116,16 @@ contract ProofRegistry {
             IVerifier verifier = getProofVerificationContract(proof);
             bool isValid = verifier.verify(proof);
 
-            isValidProof[proof] = ProofVerificationClaim({
+            isValidProof[proofHash] = ProofVerificationClaim({
                 isValid: isValid,
                 verifiedBy: address(0),
                 verificationTimestamp: 0
             });
 
-            emit ProofVerificationClaim(proof, isValid, reward, ERC20(address(0x0)), block.timestamp + CHALLENGE_PERIOD);
+            emit ProofVerificationClaimEvent(proofHash, isValid, reward, ERC20(address(0x0)), block.timestamp + CHALLENGE_PERIOD);
             return (isValid, PROOF_STATUS.FINALISED);
         } else {
-            ProofVerificationClaim memory proofWitness = isValidProof[proof];
+            ProofVerificationClaim memory proofWitness = isValidProof[proofHash];
             (bool isValid, address verifiedBy, uint verificationTimestamp) = (
                 proofWitness.isValid,
                 proofWitness.verifiedBy,
@@ -140,7 +143,7 @@ contract ProofRegistry {
             ) {
                 return (isValid, PROOF_STATUS.FINALISED);
             } else {
-                claims[proof][verifiedBy] = RewardData({
+                claims[proofHash][verifiedBy] = RewardData({
                     reward: reward,
                     token: ERC20(address(0x0)),
                     finalisationTimestamp: verificationTimestamp +
@@ -152,7 +155,8 @@ contract ProofRegistry {
     }
 
     function challenge(bytes calldata proof) external {
-        ProofVerificationClaim memory proofWitness = isValidProof[proof];
+        bytes32 proofHash = keccak256(proof);
+        ProofVerificationClaim memory proofWitness = isValidProof[proofHash];
         (
             bool originalProofVote,
             address originalVerifier,
@@ -186,16 +190,15 @@ contract ProofRegistry {
         bool challengerVote = verifier.verify(proof);
         address challengerAddress = msg.sender;
 
-        RewardData memory rewardData = claims[proof][originalVerifier];
-        (uint bid, ERC20 token, uint finalisationTimestamp) = (
+        RewardData memory rewardData = claims[proofHash][originalVerifier];
+        (uint bid, ERC20 token) = (
             rewardData.reward,
-            rewardData.token,
-            rewardData.finalisationTimestamp
+            rewardData.token
         );
 
         if (challengerVote != originalProofVote) {
             // Original proposer lied about the verification of the proof
-            isValidProof[proof] = ProofVerificationClaim({
+            isValidProof[proofHash] = ProofVerificationClaim({
                 isValid: challengerVote,
                 verifiedBy: address(0),
                 verificationTimestamp: 0
@@ -212,17 +215,18 @@ contract ProofRegistry {
     }
 
     function claimReward(bytes calldata proof) external {
+        bytes32 proofHash = keccak256(proof);
         if (
-            claims[proof][msg.sender].finalisationTimestamp == 0 &&
-            claims[proof][msg.sender].reward == 0
+            claims[proofHash][msg.sender].finalisationTimestamp == 0 &&
+            claims[proofHash][msg.sender].reward == 0
         ) {
             revert("not a valid claim");
         }
 
         (uint bid, ERC20 token, uint finalisationTimestamp) = (
-            claims[proof][msg.sender].reward,
-            claims[proof][msg.sender].token,
-            claims[proof][msg.sender].finalisationTimestamp
+            claims[proofHash][msg.sender].reward,
+            claims[proofHash][msg.sender].token,
+            claims[proofHash][msg.sender].finalisationTimestamp
         );
 
         if (block.timestamp < finalisationTimestamp) {
