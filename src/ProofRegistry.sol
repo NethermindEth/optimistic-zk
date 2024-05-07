@@ -62,8 +62,8 @@ contract ProofRegistry {
 
             isValidProof[proofHash] = ProofVerificationClaim({
                 isValid: isValid,
-                verifiedBy: address(0),
-                verificationTimestamp: 0
+                verifiedBy: address(0x1),
+                verificationTimestamp: 1
             });
 
             emit ProofVerificationClaimEvent(proofHash, isValid, reward, token, block.timestamp + CHALLENGE_PERIOD);
@@ -118,8 +118,8 @@ contract ProofRegistry {
 
             isValidProof[proofHash] = ProofVerificationClaim({
                 isValid: isValid,
-                verifiedBy: address(0),
-                verificationTimestamp: 0
+                verifiedBy: address(0x1),
+                verificationTimestamp: 1
             });
 
             emit ProofVerificationClaimEvent(proofHash, isValid, reward, ERC20(address(0x0)), block.timestamp + CHALLENGE_PERIOD);
