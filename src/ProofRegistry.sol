@@ -23,7 +23,7 @@ contract ProofRegistry {
     }
 
     event ProofVerificationClaimEvent(bytes32 proofHash, uint reward, ERC20 token, uint finalisationTimestamp);
-
+// period in which the proof can be challenged
     uint public immutable CHALLENGE_PERIOD;
     // Only opt-ed Ethereum validators can vote on the verification
     mapping(address validator => bool) public canVote;
@@ -51,6 +51,12 @@ contract ProofRegistry {
         }
     }
 
+/**
+* it takes in the proof 
+* address of the token
+*and amount of the rewad
+*     
+ */
     function verifyERC20(bytes calldata proof, ERC20 token, uint reward) external payable returns (bool, PROOF_STATUS) {
         bytes32 proofHash = keccak256(proof);
         if (
@@ -58,12 +64,15 @@ contract ProofRegistry {
             isValidProof[proofHash].verificationTimestamp == 0
         ) {
             IVerifier verifier = getProofVerificationContract(proof);
+
+
+
             bool isValid = verifier.verify(proof);
 
             isValidProof[proofHash] = ProofVerificationClaim({
                 isValid: isValid,
-                verifiedBy: address(0),
-                verificationTimestamp: 0
+                verifiedBy: address(0x1),
+                verificationTimestamp: 1
             });
 
             emit ProofVerificationClaimEvent(proofHash, isValid, reward, token, block.timestamp + CHALLENGE_PERIOD);
@@ -78,6 +87,8 @@ contract ProofRegistry {
                 proofWitness.verifiedBy,
                 proofWitness.verificationTimestamp
             );
+
+            // in which case is the verified address always zero
 
             if (
                 verifiedBy == address(0x1) &&
@@ -104,6 +115,7 @@ contract ProofRegistry {
     function verify(
         bytes calldata proof
     ) external payable returns (bool, PROOF_STATUS) {
+        // is the reward not suppose to be gotten from the transaction
         uint reward = msg.value;
         bytes32 proofHash = keccak256(proof);
         if (
@@ -114,11 +126,12 @@ contract ProofRegistry {
             payable(msg.sender).transfer(reward);
 
             IVerifier verifier = getProofVerificationContract(proof);
+            // why do we equate bool to address zero
             bool isValid = verifier.verify(proof);
 
             isValidProof[proofHash] = ProofVerificationClaim({
                 isValid: isValid,
-                verifiedBy: address(0),
+                verifiedBy: address(0x1),
                 verificationTimestamp: 0
             });
 
@@ -154,6 +167,7 @@ contract ProofRegistry {
         }
     }
 
+// since the proof is been challenged is the check done offchain
     function challenge(bytes calldata proof) external {
         bytes32 proofHash = keccak256(proof);
         ProofVerificationClaim memory proofWitness = isValidProof[proofHash];
@@ -243,6 +257,9 @@ contract ProofRegistry {
         }
     }
 
+/**
+* why is this always returning address zero
+ */
     function getProofVerificationContract(
         bytes calldata proof
     ) internal pure returns (IVerifier) {
