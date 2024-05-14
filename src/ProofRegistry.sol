@@ -219,25 +219,37 @@ contract ProofRegistry {
         bool challengerVote = verifier.verify(proof);
         address challengerAddress = msg.sender;
 
-        // RewardData memory rewardData = claims[proofHash][originalVerifier];
-        // (uint bid, ERC20 token) = (rewardData.reward, rewardData.token);
+        RewardData memory rewardData = claims[proofHash][originalVerifier];
+        (uint bid, ERC20 token) = (rewardData.reward, rewardData.token);
 
         if (challengerVote == originalProofVote) {
             revert("Challenger vote same as original verifier");
         }
 
         // Original proposer lied about the verification of the proof
+        // removing the reward data 
+        address _initialVerifier = isValidProof[proofHash].verifiedBy;
+
+        
+
         isValidProof[proofHash] = ProofVerificationClaim({
             isValid: challengerVote,
             verifiedBy: address(0x1),
             verificationTimestamp: 1
         });
+
+        
         // Pay the challenger
         if (token != ERC20(address(0x0))) {
             token.transfer(challengerAddress, bid);
         } else {
             payable(challengerAddress).transfer(bid);
         }
+        claims[proofHash][_initialVerifier] = RewardData({
+            reward:0,
+            token:address(0x0),
+            finalisationTimestamp:block.timestamp
+        });
         // Penalise the original verifier
         slash(originalVerifier);
     }
