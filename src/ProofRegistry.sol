@@ -48,7 +48,16 @@ contract ProofRegistry {
         address proofVerifier = msg.sender;
 
         bytes32 proofHash = keccak256(proof);
-        if (canVote[proofVerifier]) {
+        ProofVerificationClaim memory proofWitness = isValidProof[
+                proofHash
+            ];
+        (bool _, address verifiedBy, uint verificationTimestamp) = (
+                proofWitness.isValid,
+                proofWitness.verifiedBy,
+                proofWitness.verificationTimestamp
+        );
+
+        if (canVote[proofVerifier] && verifiedBy == address(0x0) && verificationTimestamp == 0) {
             isValidProof[proofHash] = ProofVerificationClaim({
                 isValid: isValid,
                 verifiedBy: proofVerifier,
