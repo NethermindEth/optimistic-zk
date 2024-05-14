@@ -22,7 +22,12 @@ contract ProofRegistry {
         uint256 finalisationTimestamp;
     }
 
-    event ProofVerificationClaimEvent(bytes32 proofHash, uint reward, ERC20 token, uint finalisationTimestamp);
+    event ProofVerificationClaimEvent(
+        bytes32 proofHash,
+        uint reward,
+        ERC20 token,
+        uint finalisationTimestamp
+    );
 
     uint public immutable CHALLENGE_PERIOD;
     // Only opt-ed Ethereum validators can vote on the verification
@@ -31,7 +36,8 @@ contract ProofRegistry {
     // address(0x1) and timestamp = 1, indicate that the proof was verified on-chain
     mapping(bytes32 proofHash => ProofVerificationClaim) public isValidProof;
     // proof => address of validator that voted => (reward for verifying the proof, finalisation timestamp of proof)
-    mapping(bytes32 proofHash => mapping(address proofVerifier => RewardData)) public claims;
+    mapping(bytes32 proofHash => mapping(address proofVerifier => RewardData))
+        public claims;
 
     constructor(uint challengePeriod) {
         CHALLENGE_PERIOD = challengePeriod;
@@ -51,7 +57,11 @@ contract ProofRegistry {
         }
     }
 
-    function verifyERC20(bytes calldata proof, ERC20 token, uint reward) external payable returns (bool, PROOF_STATUS) {
+    function verifyERC20(
+        bytes calldata proof,
+        ERC20 token,
+        uint reward
+    ) external payable returns (bool, PROOF_STATUS) {
         bytes32 proofHash = keccak256(proof);
         if (
             isValidProof[proofHash].verifiedBy == address(0x0) &&
@@ -66,27 +76,31 @@ contract ProofRegistry {
                 verificationTimestamp: 1
             });
 
-            emit ProofVerificationClaimEvent(proofHash, isValid, reward, token, block.timestamp + CHALLENGE_PERIOD);
+            emit ProofVerificationClaimEvent(
+                proofHash,
+                isValid,
+                reward,
+                token,
+                block.timestamp + CHALLENGE_PERIOD
+            );
             return (isValid, PROOF_STATUS.FINALISED);
         } else {
             // Escrow the reward in ERC20 token from the prover in the ProofRegistry
             token.transferFrom(msg.sender, address(this), reward);
 
-            ProofVerificationClaim memory proofWitness = isValidProof[proofHash];
+            ProofVerificationClaim memory proofWitness = isValidProof[
+                proofHash
+            ];
             (bool isValid, address verifiedBy, uint verificationTimestamp) = (
                 proofWitness.isValid,
                 proofWitness.verifiedBy,
                 proofWitness.verificationTimestamp
             );
 
-            if (
-                verifiedBy == address(0x1) &&
-                verificationTimestamp == 1
-            ) {
+            if (verifiedBy == address(0x1) && verificationTimestamp == 1) {
                 return (isValid, PROOF_STATUS.FINALISED);
             } else if (
-                block.timestamp >=
-                    verificationTimestamp + CHALLENGE_PERIOD
+                block.timestamp >= verificationTimestamp + CHALLENGE_PERIOD
             ) {
                 return (isValid, PROOF_STATUS.FINALISED);
             } else {
@@ -122,24 +136,28 @@ contract ProofRegistry {
                 verificationTimestamp: 1
             });
 
-            emit ProofVerificationClaimEvent(proofHash, isValid, reward, ERC20(address(0x0)), block.timestamp + CHALLENGE_PERIOD);
+            emit ProofVerificationClaimEvent(
+                proofHash,
+                isValid,
+                reward,
+                ERC20(address(0x0)),
+                block.timestamp + CHALLENGE_PERIOD
+            );
             return (isValid, PROOF_STATUS.FINALISED);
         } else {
-            ProofVerificationClaim memory proofWitness = isValidProof[proofHash];
+            ProofVerificationClaim memory proofWitness = isValidProof[
+                proofHash
+            ];
             (bool isValid, address verifiedBy, uint verificationTimestamp) = (
                 proofWitness.isValid,
                 proofWitness.verifiedBy,
                 proofWitness.verificationTimestamp
             );
 
-            if (
-                verifiedBy == address(0x1) &&
-                verificationTimestamp == 1
-            ) {
+            if (verifiedBy == address(0x1) && verificationTimestamp == 1) {
                 return (isValid, PROOF_STATUS.FINALISED);
             } else if (
-                block.timestamp >=
-                    verificationTimestamp + CHALLENGE_PERIOD
+                block.timestamp >= verificationTimestamp + CHALLENGE_PERIOD
             ) {
                 return (isValid, PROOF_STATUS.FINALISED);
             } else {
@@ -168,13 +186,15 @@ contract ProofRegistry {
             );
 
         if (
-            originalVerifier == address(0x0) && originalVerificationTimestamp == 0
+            originalVerifier == address(0x0) &&
+            originalVerificationTimestamp == 0
         ) {
             revert("No past vote");
         }
 
         if (
-            originalVerifier == address(0x1) && originalVerificationTimestamp == 1
+            originalVerifier == address(0x1) &&
+            originalVerificationTimestamp == 1
         ) {
             revert("Proof was verified on-chain, cannot be challenged");
         }
@@ -191,15 +211,12 @@ contract ProofRegistry {
         address challengerAddress = msg.sender;
 
         RewardData memory rewardData = claims[proofHash][originalVerifier];
-        (uint bid, ERC20 token) = (
-            rewardData.reward,
-            rewardData.token
-        );
+        (uint bid, ERC20 token) = (rewardData.reward, rewardData.token);
 
         if (challengerVote == originalProofVote) {
             revert("Challenger vote same as original verifier");
         }
-        
+
         // Original proposer lied about the verification of the proof
         isValidProof[proofHash] = ProofVerificationClaim({
             isValid: challengerVote,
@@ -239,7 +256,7 @@ contract ProofRegistry {
         if (token != ERC20(address(0x0))) {
             token.transfer(msg.sender, bid);
         } else {
-          payable(msg.sender).transfer(bid);
+            payable(msg.sender).transfer(bid);
         }
     }
 
