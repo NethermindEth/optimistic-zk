@@ -44,28 +44,7 @@ contract ProofRegistry {
         CHALLENGE_PERIOD = challengePeriod;
     }
 
-    // Restaked Ethereum Validators can use this function to update the registry
-    function voteValidProof(
-        uint256[] calldata _publicInputs,
-        uint256[] calldata _proof,
-        uint256[] calldata _recursiveAggregationInput,
-        bool isValid
-    ) external {
-        address proofVerifier = msg.sender;
-        ProofData memory proof = ProofData(_publicInputs, _proof, _recursiveAggregationInput);
-        bytes32 proofHash = keccak256(proof);
-        ProofVerificationClaim memory proofWitness = isValidProof[proofHash];
-        ( bool _, address verifiedBy, uint256 verificationTimestamp) =
-            (proofWitness.isValid, proofWitness.verifiedBy, proofWitness.verificationTimestamp);
 
-        if (canVote[proofVerifier] && verifiedBy == address(0x0) && verificationTimestamp == 0) {
-            isValidProof[proofHash] = ProofVerificationClaim({
-                isValid: isValid,
-                verifiedBy: proofVerifier,
-                verificationTimestamp: block.timestamp
-            });
-        }
-    }
 
     function verifyERC20(
         uint256[] calldata _publicInputs,
@@ -147,7 +126,7 @@ contract ProofRegistry {
 
         ProofVerificationClaim memory proofWitness = isValidProof[proofId];
         (bool originalProofVote, address originalVerifier, uint256 originalVerificationTimestamp) =
-            (, proofWitness.isValid, proofWitness.verifiedBy, proofWitness.verificationTimestamp);
+            ( proofWitness.isValid, proofWitness.verifiedBy, proofWitness.verificationTimestamp);
 
         if (originalVerifier == address(0x0) && originalVerificationTimestamp == 0) {
             revert("No past vote");
