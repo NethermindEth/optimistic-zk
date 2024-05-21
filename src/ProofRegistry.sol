@@ -8,16 +8,18 @@ contract ProofRegistry {
         RECEIVED,
         FINALISED
     }
-struct ProofData{
+
+    struct ProofData {
         uint256[] _publicInputs;
         uint256[] _proof;
         uint256[] _recursiveAggregationInput;
-}
+    }
+
     struct ProofVerificationClaim {
         ProofData proof;
         bool isValid;
         address verifiedBy;
-        uint verificationTimestamp;
+        uint256 verificationTimestamp;
     }
 
     struct RewardData {
@@ -27,40 +29,34 @@ struct ProofData{
         uint256 finalisationTimestamp;
     }
 
-    event ProofVerificationClaimEvent(
-        bytes32 proofHash,
-        uint reward,
-        ERC20 token,
-        uint finalisationTimestamp
-    );
+    event ProofVerificationClaimEvent(bytes32 proofHash, uint256 reward, ERC20 token, uint256 finalisationTimestamp);
 
-    uint public immutable CHALLENGE_PERIOD;
+    uint256 public immutable CHALLENGE_PERIOD;
     // Only opt-ed Ethereum validators can vote on the verification
     mapping(address validator => bool) public canVote;
     // proof => (is proof valid, address of the validator that voted, timestamp that they voted)
     // address(0x1) and timestamp = 1, indicate that the proof was verified on-chain
     mapping(bytes32 proofHash => ProofVerificationClaim) public isValidProof;
     // proof => address of validator that voted => (reward for verifying the proof, finalisation timestamp of proof)
-    mapping(bytes32 proofHash => mapping(address proofVerifier => RewardData))
-        public claims;
+    mapping(bytes32 proofHash => mapping(address proofVerifier => RewardData)) public claims;
 
-    constructor(uint challengePeriod) {
+    constructor(uint256 challengePeriod) {
         CHALLENGE_PERIOD = challengePeriod;
     }
 
     // Restaked Ethereum Validators can use this function to update the registry
-    function voteValidProof(bytes calldata proof, bool isValid) external {
+    function voteValidProof(
+        uint256[] calldata _publicInputs,
+        uint256[] calldata _proof,
+        uint256[] calldata _recursiveAggregationInput,
+        bool isValid
+    ) external {
         address proofVerifier = msg.sender;
-
+        ProofData memory proof = ProofData(_publicInputs, _proof, _recursiveAggregationInput);
         bytes32 proofHash = keccak256(proof);
-        ProofVerificationClaim memory proofWitness = isValidProof[
-                proofHash
-            ];
-        (bool _, address verifiedBy, uint verificationTimestamp) = (
-                proofWitness.isValid,
-                proofWitness.verifiedBy,
-                proofWitness.verificationTimestamp
-        );
+        ProofVerificationClaim memory proofWitness = isValidProof[proofHash];
+        ( bool _, address verifiedBy, uint256 verificationTimestamp) =
+            (proofWitness.isValid, proofWitness.verifiedBy, proofWitness.verificationTimestamp);
 
         if (canVote[proofVerifier] && verifiedBy == address(0x0) && verificationTimestamp == 0) {
             isValidProof[proofHash] = ProofVerificationClaim({
@@ -76,91 +72,61 @@ struct ProofData{
         uint256[] calldata _proof,
         uint256[] calldata _recursiveAggregationInput,
         ERC20 token,
-        uint reward
+        uint256 reward
     ) external payable returns (bool, PROOF_STATUS) {
-         ProofData memory proof = ProofData(
-            _publicInputs,
-            _proof,
-            _recursiveAggregationInput
-        );
+        ProofData memory proof = ProofData(_publicInputs, _proof, _recursiveAggregationInput);
 
-        bytes32 proofId = keccak256(proof);
+        bytes32 proofHash = keccak256(proof);
 
-        if (
-            isValidProof[proofId].verifiedBy == address(0x0) &&
-            isValidProof[proofId].verificationTimestamp == 0
-        ) {
+        if (isValidProof[proofHash].verifiedBy == address(0x0) && isValidProof[proofHash].verificationTimestamp == 0) {
             IVerifier verifier = getProofVerificationContract();
-            bool isValid = verifier.verify(_publicInputs,
-            _proof,
-            _recursiveAggregationInput);
+            bool isValid = verifier.verify(_publicInputs, _proof, _recursiveAggregationInput);
 
-            isValidProof[proofId] = ProofVerificationClaim({
+            isValidProof[proofHash] = ProofVerificationClaim({
                 ProofData: proof,
                 isValid: isValid,
-                verifiedBy: msg.sender,
+                verifiedBy: address(0x1),
                 verificationTimestamp: 1
             });
 
-            emit ProofVerificationClaimEvent(
-                proofId,
-                isValid,
-                reward,
-                token,
-                block.timestamp + CHALLENGE_PERIOD
-            );
+            emit ProofVerificationClaimEvent(proofId, isValid, reward, token, block.timestamp + CHALLENGE_PERIOD);
             return (isValid, PROOF_STATUS.FINALISED);
         } else {
             // Escrow the reward in ERC20 token from the prover in the ProofRegistry
             token.transferFrom(msg.sender, address(this), reward);
 
-            ProofVerificationClaim memory proofWitness = isValidProof[
-                proofId
-            ];
-            (bool isValid, address verifiedBy, uint verificationTimestamp) = (
-                proofWitness.isValid,
-                proofWitness.verifiedBy,
-                proofWitness.verificationTimestamp
-            );
+            ProofVerificationClaim memory proofWitness = isValidProof[proofHash];
+            (bool isValid, address verifiedBy, uint256 verificationTimestamp) =
+                (proofWitness.isValid, proofWitness.verifiedBy, proofWitness.verificationTimestamp);
 
             if (verifiedBy == address(0x1) && verificationTimestamp == 1) {
                 return (isValid, PROOF_STATUS.FINALISED);
-            } else if (
-                block.timestamp >= verificationTimestamp + CHALLENGE_PERIOD
-            ) {
+            } else if (block.timestamp >= verificationTimestamp + CHALLENGE_PERIOD) {
                 return (isValid, PROOF_STATUS.FINALISED);
             } else {
-                claims[proofId][verifiedBy] = RewardData({
+                claims[proofHash][verifiedBy] = RewardData({
                     reward: reward,
                     token: token,
-                    finalisationTimestamp: verificationTimestamp +
-                        CHALLENGE_PERIOD
+                    finalisationTimestamp: verificationTimestamp + CHALLENGE_PERIOD
                 });
                 return (isValid, PROOF_STATUS.RECEIVED);
             }
         }
     }
 
-   // Restaked Ethereum Validators can use this function to update the registry
-    function voteValidProof(        
+    // Restaked Ethereum Validators can use this function to update the registry
+    function voteValidProof(
         uint256[] calldata _publicInputs,
         uint256[] calldata _proof,
-        uint256[] calldata _recursiveAggregationInput, bool isValid) external {
+        uint256[] calldata _recursiveAggregationInput,
+        bool isValid
+    ) external {
         address proofVerifier = msg.sender;
-    ProofData memory proof = ProofData(
-            _publicInputs,
-            _proof,
-            _recursiveAggregationInput
-        );
-        bytes32 proofId = keccak256(proof);
-        ProofVerificationClaim memory proofWitness = isValidProof[
-                proofId
-            ];
-        (bool _, address verifiedBy, uint verificationTimestamp) = (
-                proofWitness.isValid,
-                proofWitness.verifiedBy,
-                proofWitness.verificationTimestamp
-        );
+        ProofData memory proof = ProofData(_publicInputs, _proof, _recursiveAggregationInput);
+        bytes32 proofHash = keccak256(proof);
+        ProofVerificationClaim memory proofWitness = isValidProof[proofHash];
+        (bool _, address verifiedBy, uint256 verificationTimestamp) =
+            (proofWitness.isValid, proofWitness.verifiedBy, proofWitness.verificationTimestamp);
 
         if (canVote[proofVerifier] && verifiedBy == address(0x0) && verificationTimestamp == 0) {
             isValidProof[proofHash] = ProofVerificationClaim({
@@ -171,109 +137,76 @@ struct ProofData{
         }
     }
 
-    function challenge(uint256[] calldata _publicInputs,
+    function challenge(
+        uint256[] calldata _publicInputs,
         uint256[] calldata _proof,
-        uint256[] calldata _recursiveAggregationInput) external {
-         ProofData memory proof = ProofData(
-            _publicInputs,
-            _proof,
-            _recursiveAggregationInput
-        );
-        bytes32 proofId = keccak256(proof);
+        uint256[] calldata _recursiveAggregationInput
+    ) external {
+        ProofData memory proof = ProofData(_publicInputs, _proof, _recursiveAggregationInput);
+        bytes32 proofHash = keccak256(proof);
 
         ProofVerificationClaim memory proofWitness = isValidProof[proofId];
-        (
-            bool originalProofVote,
-            address originalVerifier,
-            uint originalVerificationTimestamp
-        ) = (,
-                proofWitness.isValid,
-                proofWitness.verifiedBy,
-                proofWitness.verificationTimestamp
-            );
+        (bool originalProofVote, address originalVerifier, uint256 originalVerificationTimestamp) =
+            (, proofWitness.isValid, proofWitness.verifiedBy, proofWitness.verificationTimestamp);
 
-        if (
-            originalVerifier == address(0x0) &&
-            originalVerificationTimestamp == 0
-        ) {
+        if (originalVerifier == address(0x0) && originalVerificationTimestamp == 0) {
             revert("No past vote");
         }
 
-        if (
-            originalVerifier == address(0x1) &&
-            originalVerificationTimestamp == 1
-        ) {
+        if (originalVerifier == address(0x1) && originalVerificationTimestamp == 1) {
             revert("Proof was verified on-chain, cannot be challenged");
         }
 
-        if (
-            block.timestamp > CHALLENGE_PERIOD + originalVerificationTimestamp
-        ) {
+        if (block.timestamp > CHALLENGE_PERIOD + originalVerificationTimestamp) {
             revert("Challenge period past");
         }
 
         IVerifier verifier = getProofVerificationContract();
 
-        bool challengerVote = verifier.verify( _publicInputs,
-        _proof, _recursiveAggregationInput);
+        bool challengerVote = verifier.verify(_publicInputs, _proof, _recursiveAggregationInput);
         address challengerAddress = msg.sender;
-
 
         if (challengerVote == originalProofVote) {
             revert("Challenger vote same as original verifier");
         }
         // Original proposer lied about the verification of the proof
-        isValidProof[proofId] = ProofVerificationClaim({
-            isValid: challengerVote,
-            verifiedBy: address(0x1),
-            verificationTimestamp: 1
-        });
+        isValidProof[proofHash] =
+            ProofVerificationClaim({isValid: challengerVote, verifiedBy: address(0x1), verificationTimestamp: 1});
 
-            token.transfer(challengerAddress, bid);
-       
+        token.transfer(challengerAddress, bid);
+
         slash(originalVerifier);
     }
 
-    function claimReward(uint256[] calldata _publicInputs,
+    function claimReward(
+        uint256[] calldata _publicInputs,
         uint256[] calldata _proof,
-        uint256[] calldata _recursiveAggregationInput) external {
-            ProofData memory proof = ProofData(
-            _publicInputs,
-            _proof,
-            _recursiveAggregationInput
-        );
-        bytes32 proofId = keccak256(proof);
-        if (
-            claims[proofId][msg.sender].finalisationTimestamp == 0 &&
-            claims[proofId][msg.sender].reward == 0
-        ) {
+        uint256[] calldata _recursiveAggregationInput
+    ) external {
+        ProofData memory proof = ProofData(_publicInputs, _proof, _recursiveAggregationInput);
+        bytes32 proofHash = keccak256(proof);
+        if (claims[proofHash][msg.sender].finalisationTimestamp == 0 && claims[proofHash][msg.sender].reward == 0) {
             revert("not a valid claim");
         }
 
-        (uint bid, ERC20 token, uint finalisationTimestamp) = (
-            claims[proofId][msg.sender].reward,
-            claims[proofId][msg.sender].token,
-            claims[proofId][msg.sender].finalisationTimestamp
+        (uint256 bid, ERC20 token, uint256 finalisationTimestamp) = (
+            claims[proofHash][msg.sender].reward,
+            claims[proofHash][msg.sender].token,
+            claims[proofHash][msg.sender].finalisationTimestamp
         );
 
         if (block.timestamp < finalisationTimestamp) {
             revert("proof not finalised");
         }
 
-        
-            token.transfer(msg.sender, bid);
-        
+        token.transfer(msg.sender, bid);
     }
 
-    function getProofVerificationContract(
-    
-    ) internal pure returns (IVerifier) {
-
+    function getProofVerificationContract() internal pure returns (IVerifier) {
         // returns the contract address of a verifier contract based on the type of proof
         // the address is for zksync diamond contract
         address _verifierContract = IGetVerifier(0x32400084C286CF3E17e7B677ea9583e60a000324).getVerifier();
         return IVerifier(_verifierContract);
-
     }
 
     function slash(address maliciousProposer) internal {
@@ -283,13 +216,13 @@ struct ProofData{
 }
 
 interface IVerifier {
-  function verify(
+    function verify(
         uint256[] calldata _publicInputs,
         uint256[] calldata _proof,
         uint256[] calldata _recursiveAggregationInput
     ) external view returns (bool);
 }
 
-interface IGetVerifier{
-     function getVerifier() external returns (address);
+interface IGetVerifier {
+    function getVerifier() external returns (address);
 }
