@@ -9,14 +9,9 @@ contract ProofRegistry {
         FINALISED
     }
 
-    struct ProofData {
-        uint256[] _publicInputs;
-        uint256[] _proof;
-        uint256[] _recursiveAggregationInput;
-    }
+   
 
     struct ProofVerificationClaim {
-        ProofData proof;
         bool isValid;
         address verifiedBy;
         uint256 verificationTimestamp;
@@ -53,8 +48,8 @@ contract ProofRegistry {
         ERC20 token,
         uint256 reward
     ) external payable returns (bool, PROOF_STATUS) {
-        ProofData memory proof = ProofData(_publicInputs, _proof, _recursiveAggregationInput);
-
+        // ProofData memory proof = ProofData(_publicInputs, _proof, _recursiveAggregationInput);
+  bytes memory proof = abi.encode(_publicInputs, _proof, _recursiveAggregationInput);
         bytes32 proofHash = keccak256(proof);
 
         if (isValidProof[proofHash].verifiedBy == address(0x0) && isValidProof[proofHash].verificationTimestamp == 0) {
@@ -62,13 +57,13 @@ contract ProofRegistry {
             bool isValid = verifier.verify(_publicInputs, _proof, _recursiveAggregationInput);
 
             isValidProof[proofHash] = ProofVerificationClaim({
-                ProofData: proof,
+             
                 isValid: isValid,
                 verifiedBy: address(0x1),
                 verificationTimestamp: 1
             });
 
-            emit ProofVerificationClaimEvent(proofId, isValid, reward, token, block.timestamp + CHALLENGE_PERIOD);
+            emit ProofVerificationClaimEvent(proofHash, reward, token, block.timestamp + CHALLENGE_PERIOD);
             return (isValid, PROOF_STATUS.FINALISED);
         } else {
             // Escrow the reward in ERC20 token from the prover in the ProofRegistry
@@ -101,10 +96,10 @@ contract ProofRegistry {
         bool isValid
     ) external {
         address proofVerifier = msg.sender;
-        ProofData memory proof = ProofData(_publicInputs, _proof, _recursiveAggregationInput);
+        bytes memory proof = abi.encode(_publicInputs, _proof, _recursiveAggregationInput);
         bytes32 proofHash = keccak256(proof);
         ProofVerificationClaim memory proofWitness = isValidProof[proofHash];
-        (bool _, address verifiedBy, uint256 verificationTimestamp) =
+        (, address verifiedBy, uint256 verificationTimestamp) =
             (proofWitness.isValid, proofWitness.verifiedBy, proofWitness.verificationTimestamp);
 
         if (canVote[proofVerifier] && verifiedBy == address(0x0) && verificationTimestamp == 0) {
@@ -121,10 +116,10 @@ contract ProofRegistry {
         uint256[] calldata _proof,
         uint256[] calldata _recursiveAggregationInput
     ) external {
-        ProofData memory proof = ProofData(_publicInputs, _proof, _recursiveAggregationInput);
+        bytes memory proof = abi.encode(_publicInputs, _proof, _recursiveAggregationInput);
         bytes32 proofHash = keccak256(proof);
 
-        ProofVerificationClaim memory proofWitness = isValidProof[proofId];
+        ProofVerificationClaim memory proofWitness = isValidProof[proofHash];
         (bool originalProofVote, address originalVerifier, uint256 originalVerificationTimestamp) =
             ( proofWitness.isValid, proofWitness.verifiedBy, proofWitness.verificationTimestamp);
 
@@ -145,6 +140,9 @@ contract ProofRegistry {
         bool challengerVote = verifier.verify(_publicInputs, _proof, _recursiveAggregationInput);
         address challengerAddress = msg.sender;
 
+    RewardData memory rewardData = claims[proofHash][originalVerifier];
+        (uint bid, ERC20 token) = (rewardData.reward, rewardData.token);
+
         if (challengerVote == originalProofVote) {
             revert("Challenger vote same as original verifier");
         }
@@ -162,7 +160,7 @@ contract ProofRegistry {
         uint256[] calldata _proof,
         uint256[] calldata _recursiveAggregationInput
     ) external {
-        ProofData memory proof = ProofData(_publicInputs, _proof, _recursiveAggregationInput);
+        bytes memory proof = abi.encode(_publicInputs, _proof, _recursiveAggregationInput);
         bytes32 proofHash = keccak256(proof);
         if (claims[proofHash][msg.sender].finalisationTimestamp == 0 && claims[proofHash][msg.sender].reward == 0) {
             revert("not a valid claim");
@@ -181,7 +179,7 @@ contract ProofRegistry {
         token.transfer(msg.sender, bid);
     }
 
-    function getProofVerificationContract() internal pure returns (IVerifier) {
+    function getProofVerificationContract() internal returns (IVerifier) {
         // returns the contract address of a verifier contract based on the type of proof
         // the address is for zksync diamond contract
         address _verifierContract = IGetVerifier(0x32400084C286CF3E17e7B677ea9583e60a000324).getVerifier();
