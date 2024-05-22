@@ -1,81 +1,20 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import "./MerkleStatementContract.sol";
-import "./FriStatementContract.sol";
-import "./GPSStatementVerification.sol";
-import "./MemoryPageFactRegistry.sol";
+import "./Interfaces.sol";
+import "./Structs.sol";
 
 contract ProofRegistry {
-    MerkleStatementContract public merkleStatementContract;
-    FriStatementContract public friStatementContract;
-    GPSStatementVerification public gpsStatementVerification;
-    MemoryPageFactRegistry public memoryPageFactRegistry;
+    IMerkleStatementContract public merkleStatementContract;
+    IFriStatementContract public friStatementContract;
+    IGPSStatementVerification public gpsStatementVerification;
+    IMemoryPageFactRegistry public memoryPageFactRegistry;
 
     uint public immutable CHALLENGE_PERIOD;
 
     enum PROOF_STATUS {
         RECEIVED,
         FINALISED
-    }
-
-    struct MerkelStatementProof {
-        uint256[] merkleView;
-        uint256[] initialMerkleQueue;
-        uint256 height;
-        uint256 expectedRoot;
-        bytes32 factHash;
-    }
-
-    struct MerkleStatementProofVerificationClaim {
-        MerkelStatementProof proof;
-        bool isValid;
-        address verifiedBy;
-        uint verificationTimestamp;
-    }
-
-    struct FriProof {
-        uint256[] proof;
-        uint256[] friQueue;
-        uint256 evaluationPoint;
-        uint256 friStepSize;
-        uint256 expectedRoot;
-    }
-
-    struct FriProofVerificationClaim {
-        FriProof proof;
-        bool isValid;
-        address verifiedBy;
-        uint verificationTimestamp;
-    }
-    struct GPSProof {
-        uint256[] proofParams;
-        uint256[] proof;
-        uint256[] taskMetadata;
-        uint256[] cairoAuxInput;
-        uint256 cairoVerifierId;
-    }
-
-    struct GPSProofVerificationClaim {
-        GPSProof proof;
-        bool isValid;
-        address verifiedBy;
-        uint verificationTimestamp;
-    }
-
-    struct ContinuousMemoryPageProof {
-        uint256 startAddr;
-        uint256[] values;
-        uint256 z;
-        uint256 alpha;
-        uint256 prime;
-    }
-
-    struct ContinuousMemoryPageProofVerificationClaim {
-        ContinuousMemoryPageProof proof;
-        bool isValid;
-        address verifiedBy;
-        uint verificationTimestamp;
     }
 
     mapping(bytes32 => MerkleStatementProofVerificationClaim)
@@ -86,38 +25,22 @@ contract ProofRegistry {
         public continuousMemoryPageVerificationClaims;
     mapping(address => uint256) public challengerRewards;
 
-    event ProofRegistered(bytes32 indexed proofId, address indexed verifier);
+    event ProofRegistered(
+        bytes32 indexed proofId,
+        address indexed verifier,
+        string proofType
+    );
     event ProofChallenged(
         bytes32 indexed proofId,
         address indexed challenger,
-        bool indexed isValid
+        bool indexed isValid,
+        string proofType
     );
     event RewardClaimed(address indexed challenger, uint256 amount);
     event ProofRefunded(
         bytes32 indexed proofId,
         address indexed claimer,
         uint256 amount
-    );
-    event FriProofRegistered(bytes32 indexed proofId, address indexed verifier);
-    event FriProofChallenged(
-        bytes32 indexed proofId,
-        address indexed challenger,
-        bool indexed isValid
-    );
-    event GPSProofRegistered(bytes32 indexed proofId, address indexed verifier);
-    event GPSProofChallenged(
-        bytes32 indexed proofId,
-        address indexed challenger,
-        bool indexed isValid
-    );
-    event ContinuousMemoryPageProofRegistered(
-        bytes32 indexed proofId,
-        address indexed verifier
-    );
-    event ContinuousMemoryPageProofChallenged(
-        bytes32 indexed proofId,
-        address indexed challenger,
-        bool indexed isValid
     );
 
     error ProofAlreadyRegistered();
@@ -129,23 +52,17 @@ contract ProofRegistry {
     error InvalidChallenge();
 
     constructor(
-        address _merkleStatementContract,
-        address _friStatementContract,
-        address _gpsStatementVerification,
-        address _memoryPageFactRegistry,
+        IMerkleStatementContract _merkleStatementContract,
+        IFriStatementContract _friStatementContract,
+        IGPSStatementVerification _gpsStatementVerification,
+        IMemoryPageFactRegistry _memoryPageFactRegistry,
         uint _challengePeriod
     ) {
-        merkleStatementContract = MerkleStatementContract(
-            _merkleStatementContract
-        );
         CHALLENGE_PERIOD = _challengePeriod;
-        friStatementContract = FriStatementContract(_friStatementContract);
-        gpsStatementVerification = GPSStatementVerification(
-            _gpsStatementVerification
-        );
-        memoryPageFactRegistry = MemoryPageFactRegistry(
-            _memoryPageFactRegistry
-        );
+        merkleStatementContract = _merkleStatementContract;
+        friStatementContract = _friStatementContract;
+        gpsStatementVerification = _gpsStatementVerification;
+        memoryPageFactRegistry = _memoryPageFactRegistry;
     }
 
     /**
@@ -164,7 +81,7 @@ contract ProofRegistry {
         uint256 expectedRoot,
         bytes32 factHash,
         bool isValid
-    ) internal {
+    ) public {
         MerkelStatementProof memory proof = MerkelStatementProof(
             merkleView,
             initialMerkleQueue,
@@ -183,7 +100,7 @@ contract ProofRegistry {
             msg.sender,
             block.timestamp
         );
-        emit ProofRegistered(proofId, msg.sender);
+        emit ProofRegistered(proofId, msg.sender, "MERKLE");
     }
 
     function registerFriProof(
@@ -193,7 +110,7 @@ contract ProofRegistry {
         uint256 friStepSize,
         uint256 expectedRoot,
         bool isValid
-    ) internal {
+    ) public {
         FriProof memory friProof = FriProof(
             proof,
             friQueue,
@@ -212,7 +129,7 @@ contract ProofRegistry {
             msg.sender,
             block.timestamp
         );
-        emit FriProofRegistered(proofId, msg.sender);
+        emit ProofRegistered(proofId, msg.sender, "FRI");
     }
 
     function registerGPSProof(
@@ -222,7 +139,7 @@ contract ProofRegistry {
         uint256[] calldata cairoAuxInput,
         uint256 cairoVerifierId,
         bool isValid
-    ) internal {
+    ) public {
         GPSProof memory gpsProof = GPSProof(
             proofParams,
             proof,
@@ -241,7 +158,7 @@ contract ProofRegistry {
             msg.sender,
             block.timestamp
         );
-        emit GPSProofRegistered(proofId, msg.sender);
+        emit ProofRegistered(proofId, msg.sender, "GPS");
     }
 
     function registerContinuousMemoryPageProof(
@@ -251,7 +168,7 @@ contract ProofRegistry {
         uint256 alpha,
         uint256 prime,
         bool isValid
-    ) internal {
+    ) public {
         ContinuousMemoryPageProof memory proof = ContinuousMemoryPageProof(
             startAddr,
             values,
@@ -275,7 +192,7 @@ contract ProofRegistry {
             msg.sender,
             block.timestamp
         );
-        emit ContinuousMemoryPageProofRegistered(proofId, msg.sender);
+        emit ProofRegistered(proofId, msg.sender, "CMPP");
     }
 
     /**
@@ -312,7 +229,7 @@ contract ProofRegistry {
             claim.verificationTimestamp = block.timestamp;
             uint256 rewardAmount = calculateReward();
             challengerRewards[msg.sender] += rewardAmount;
-            emit ProofChallenged(proofId, msg.sender, challengerVote);
+            emit ProofChallenged(proofId, msg.sender, challengerVote, "MERKLE");
         } else {
             revert InvalidChallenge();
         }
@@ -350,7 +267,7 @@ contract ProofRegistry {
             claim.verificationTimestamp = block.timestamp;
             uint256 rewardAmount = calculateReward();
             challengerRewards[msg.sender] += rewardAmount;
-            emit FriProofChallenged(proofId, msg.sender, challengerVote);
+            emit ProofChallenged(proofId, msg.sender, challengerVote, "FRI");
         } else {
             revert InvalidChallenge();
         }
@@ -388,7 +305,7 @@ contract ProofRegistry {
             claim.verificationTimestamp = block.timestamp;
             uint256 rewardAmount = calculateReward();
             challengerRewards[msg.sender] += rewardAmount;
-            emit GPSProofChallenged(proofId, msg.sender, challengerVote);
+            emit ProofChallenged(proofId, msg.sender, challengerVote, "GPS");
         } else {
             revert InvalidChallenge();
         }
@@ -425,11 +342,7 @@ contract ProofRegistry {
             claim.verificationTimestamp = block.timestamp;
             uint256 rewardAmount = calculateReward();
             challengerRewards[msg.sender] += rewardAmount;
-            emit ContinuousMemoryPageProofChallenged(
-                proofId,
-                msg.sender,
-                challengerVote
-            );
+            emit ProofChallenged(proofId, msg.sender, challengerVote, "CMPP");
         } else {
             revert InvalidChallenge();
         }
@@ -581,60 +494,57 @@ contract ProofRegistry {
         }
     }
 
-    function verifyGPS(
-        uint256[] calldata proofParams,
-        uint256[] calldata proof,
-        uint256[] calldata taskMetadata,
-        uint256[] calldata cairoAuxInput,
-        uint256 cairoVerifierId
-    ) external payable returns (bool, PROOF_STATUS) {
-        uint reward = msg.value;
-        GPSProof memory gpsProof = GPSProof(
-            proofParams,
-            proof,
-            taskMetadata,
-            cairoAuxInput,
-            cairoVerifierId
-        );
-        bytes32 proofId = keccak256(abi.encode(gpsProof));
+function verifyGPS(GPSProofData calldata gpsProofData) external payable returns (bool, PROOF_STATUS) {
+    uint reward = msg.value;
+    GPSProof memory gpsProof = GPSProof(
+        gpsProofData.proofParams,
+        gpsProofData.proof,
+        gpsProofData.taskMetadata,
+        gpsProofData.cairoAuxInput,
+        gpsProofData.cairoVerifierId
+    );
+    bytes32 proofId = keccak256(abi.encode(gpsProof));
 
-        if (gpsVerificationClaims[proofId].verifiedBy == address(0)) {
-            bool isValid = gpsStatementVerification.verifyProofAndRegister(
-                proofParams,
-                proof,
-                taskMetadata,
-                cairoAuxInput,
-                cairoVerifierId
-            );
-            if (!isValid) {
-                payable(msg.sender).transfer(reward);
-                emit ProofRefunded(proofId, msg.sender, reward);
-                return (false, PROOF_STATUS.FINALISED);
-            }
-            registerGPSProof(
-                proofParams,
-                proof,
-                taskMetadata,
-                cairoAuxInput,
-                cairoVerifierId,
-                isValid
-            );
-            return (isValid, PROOF_STATUS.FINALISED);
-        } else {
-            GPSProofVerificationClaim memory claim = gpsVerificationClaims[
-                proofId
-            ];
-            if (
-                block.timestamp >=
-                claim.verificationTimestamp + CHALLENGE_PERIOD
-            ) {
-                return (claim.isValid, PROOF_STATUS.FINALISED);
-            } else {
-                challengerRewards[claim.verifiedBy] += reward;
-                return (claim.isValid, PROOF_STATUS.RECEIVED);
-            }
-        }
+    if (gpsVerificationClaims[proofId].verifiedBy == address(0)) {
+        return _verifyGPSOnChain(gpsProofData, reward, proofId);
+    } else {
+        return _verifyGPSOffChain(proofId, reward);
     }
+}
+
+function _verifyGPSOnChain(GPSProofData calldata gpsProofData, uint reward, bytes32 proofId) internal returns (bool, PROOF_STATUS) {
+    bool isValid = gpsStatementVerification.verifyProofAndRegister(
+        gpsProofData.proofParams,
+        gpsProofData.proof,
+        gpsProofData.taskMetadata,
+        gpsProofData.cairoAuxInput,
+        gpsProofData.cairoVerifierId
+    );
+    if (!isValid) {
+        payable(msg.sender).transfer(reward);
+        emit ProofRefunded(proofId, msg.sender, reward);
+        return (false, PROOF_STATUS.FINALISED);
+    }
+    registerGPSProof(
+        gpsProofData.proofParams,
+        gpsProofData.proof,
+        gpsProofData.taskMetadata,
+        gpsProofData.cairoAuxInput,
+        gpsProofData.cairoVerifierId,
+        isValid
+    );
+    return (isValid, PROOF_STATUS.FINALISED);
+}
+
+function _verifyGPSOffChain(bytes32 proofId, uint reward) internal returns (bool, PROOF_STATUS) {
+    GPSProofVerificationClaim memory claim = gpsVerificationClaims[proofId];
+    if (block.timestamp >= claim.verificationTimestamp + CHALLENGE_PERIOD) {
+        return (claim.isValid, PROOF_STATUS.FINALISED);
+    } else {
+        challengerRewards[claim.verifiedBy] += reward;
+        return (claim.isValid, PROOF_STATUS.RECEIVED);
+    }
+}
     function verifyContinuousMemoryPage(
         uint256 startAddr,
         uint256[] memory values,
