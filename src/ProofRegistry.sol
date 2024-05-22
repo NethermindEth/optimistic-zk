@@ -1,287 +1,605 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "./Interfaces.sol";
+import "./Structs.sol";
 
 contract ProofRegistry {
+    IMerkleStatementContract public merkleStatementContract;
+    IFriStatementContract public friStatementContract;
+    IGPSStatementVerification public gpsStatementVerification;
+    IMemoryPageFactRegistry public memoryPageFactRegistry;
+
+    uint public immutable CHALLENGE_PERIOD;
+
     enum PROOF_STATUS {
         RECEIVED,
         FINALISED
     }
 
-    struct ProofVerificationClaim {
-        bool isValid;
-        address verifiedBy;
-        uint verificationTimestamp;
-    }
+    mapping(bytes32 => MerkleStatementProofVerificationClaim)
+        public verificationClaims;
+    mapping(bytes32 => FriProofVerificationClaim) public friVerificationClaims;
+    mapping(bytes32 => GPSProofVerificationClaim) public gpsVerificationClaims;
+    mapping(bytes32 => ContinuousMemoryPageProofVerificationClaim)
+        public continuousMemoryPageVerificationClaims;
+    mapping(address => uint256) public challengerRewards;
 
-    struct RewardData {
-        uint256 reward;
-        // token address(0x0) is considered as ETH
-        ERC20 token;
-        uint256 finalisationTimestamp;
-    }
-
-    event ProofVerificationClaimEvent(
-        bytes32 proofHash,
-        uint reward,
-        ERC20 token,
-        uint finalisationTimestamp
+    event ProofRegistered(
+        bytes32 indexed proofId,
+        address indexed verifier,
+        string proofType
+    );
+    event ProofChallenged(
+        bytes32 indexed proofId,
+        address indexed challenger,
+        bool indexed isValid,
+        string proofType
+    );
+    event RewardClaimed(address indexed challenger, uint256 amount);
+    event ProofRefunded(
+        bytes32 indexed proofId,
+        address indexed claimer,
+        uint256 amount
     );
 
-    uint public immutable CHALLENGE_PERIOD;
-    // Only opt-ed Ethereum validators can vote on the verification
-    mapping(address validator => bool) public canVote;
-    // proof => (is proof valid, address of the validator that voted, timestamp that they voted)
-    // address(0x1) and timestamp = 1, indicate that the proof was verified on-chain
-    mapping(bytes32 proofHash => ProofVerificationClaim) public isValidProof;
-    // proof => address of validator that voted => (reward for verifying the proof, finalisation timestamp of proof)
-    mapping(bytes32 proofHash => mapping(address proofVerifier => RewardData))
-        public claims;
+    error ProofAlreadyRegistered();
+    error ProofNotRegistered();
+    error ProofVerifiedOnChain();
+    error ChallengePeriodPassed();
+    error ChallengerSameAsVerifier();
+    error NoRewardsAvailable();
+    error InvalidChallenge();
 
-    constructor(uint challengePeriod) {
-        CHALLENGE_PERIOD = challengePeriod;
+    constructor(
+        IMerkleStatementContract _merkleStatementContract,
+        IFriStatementContract _friStatementContract,
+        IGPSStatementVerification _gpsStatementVerification,
+        IMemoryPageFactRegistry _memoryPageFactRegistry,
+        uint _challengePeriod
+    ) {
+        CHALLENGE_PERIOD = _challengePeriod;
+        merkleStatementContract = _merkleStatementContract;
+        friStatementContract = _friStatementContract;
+        gpsStatementVerification = _gpsStatementVerification;
+        memoryPageFactRegistry = _memoryPageFactRegistry;
     }
 
-    // Restaked Ethereum Validators can use this function to update the registry
-    function voteValidProof(bytes calldata proof, bool isValid) external {
-        address proofVerifier = msg.sender;
+    /**
+     * @dev Registers a new Merkle proof and its verification claim.
+     * @param merkleView The Merkle view of the proof.
+     * @param initialMerkleQueue The initial Merkle queue of the proof.
+     * @param height The height of the Merkle tree.
+     * @param expectedRoot The expected Merkle root.
+     * @param factHash The hash of the fact associated with the proof.
+     * @param isValid The validity of the proof.
+     */
+    function registerMerkleProof(
+        uint256[] calldata merkleView,
+        uint256[] calldata initialMerkleQueue,
+        uint256 height,
+        uint256 expectedRoot,
+        bytes32 factHash,
+        bool isValid
+    ) public {
+        MerkelStatementProof memory proof = MerkelStatementProof(
+            merkleView,
+            initialMerkleQueue,
+            height,
+            expectedRoot,
+            factHash
+        );
+        bytes32 proofId = keccak256(abi.encode(proof));
+        if (verificationClaims[proofId].verifiedBy != address(0)) {
+            revert ProofAlreadyRegistered();
+        }
 
-        bytes32 proofHash = keccak256(proof);
-        ProofVerificationClaim memory proofWitness = isValidProof[
-                proofHash
-            ];
-        (bool _, address verifiedBy, uint verificationTimestamp) = (
-                proofWitness.isValid,
-                proofWitness.verifiedBy,
-                proofWitness.verificationTimestamp
+        verificationClaims[proofId] = MerkleStatementProofVerificationClaim(
+            proof,
+            isValid,
+            msg.sender,
+            block.timestamp
+        );
+        emit ProofRegistered(proofId, msg.sender, "MERKLE");
+    }
+
+    function registerFriProof(
+        uint256[] calldata proof,
+        uint256[] calldata friQueue,
+        uint256 evaluationPoint,
+        uint256 friStepSize,
+        uint256 expectedRoot,
+        bool isValid
+    ) public {
+        FriProof memory friProof = FriProof(
+            proof,
+            friQueue,
+            evaluationPoint,
+            friStepSize,
+            expectedRoot
+        );
+        bytes32 proofId = keccak256(abi.encode(friProof));
+        if (friVerificationClaims[proofId].verifiedBy != address(0)) {
+            revert ProofAlreadyRegistered();
+        }
+
+        friVerificationClaims[proofId] = FriProofVerificationClaim(
+            friProof,
+            isValid,
+            msg.sender,
+            block.timestamp
+        );
+        emit ProofRegistered(proofId, msg.sender, "FRI");
+    }
+
+    function registerGPSProof(
+        uint256[] calldata proofParams,
+        uint256[] calldata proof,
+        uint256[] calldata taskMetadata,
+        uint256[] calldata cairoAuxInput,
+        uint256 cairoVerifierId,
+        bool isValid
+    ) public {
+        GPSProof memory gpsProof = GPSProof(
+            proofParams,
+            proof,
+            taskMetadata,
+            cairoAuxInput,
+            cairoVerifierId
+        );
+        bytes32 proofId = keccak256(abi.encode(gpsProof));
+        if (gpsVerificationClaims[proofId].verifiedBy != address(0)) {
+            revert ProofAlreadyRegistered();
+        }
+
+        gpsVerificationClaims[proofId] = GPSProofVerificationClaim(
+            gpsProof,
+            isValid,
+            msg.sender,
+            block.timestamp
+        );
+        emit ProofRegistered(proofId, msg.sender, "GPS");
+    }
+
+    function registerContinuousMemoryPageProof(
+        uint256 startAddr,
+        uint256[] memory values,
+        uint256 z,
+        uint256 alpha,
+        uint256 prime,
+        bool isValid
+    ) public {
+        ContinuousMemoryPageProof memory proof = ContinuousMemoryPageProof(
+            startAddr,
+            values,
+            z,
+            alpha,
+            prime
+        );
+        bytes32 proofId = keccak256(abi.encode(proof));
+        if (
+            continuousMemoryPageVerificationClaims[proofId].verifiedBy !=
+            address(0)
+        ) {
+            revert ProofAlreadyRegistered();
+        }
+
+        continuousMemoryPageVerificationClaims[
+            proofId
+        ] = ContinuousMemoryPageProofVerificationClaim(
+            proof,
+            isValid,
+            msg.sender,
+            block.timestamp
+        );
+        emit ProofRegistered(proofId, msg.sender, "CMPP");
+    }
+
+    /**
+     * @dev Challenges a registered proof verification claim.
+     * @param proofId The ID of the proof to challenge.
+     */
+    function challengeMerkleProof(bytes32 proofId) external {
+        MerkleStatementProofVerificationClaim
+            storage claim = verificationClaims[proofId];
+        if (claim.verifiedBy == address(0)) {
+            revert ProofNotRegistered();
+        }
+        if (claim.verifiedBy == address(0x1)) {
+            revert ProofVerifiedOnChain();
+        }
+        if (block.timestamp >= claim.verificationTimestamp + CHALLENGE_PERIOD) {
+            revert ChallengePeriodPassed();
+        }
+        if (msg.sender == claim.verifiedBy) {
+            revert ChallengerSameAsVerifier();
+        }
+
+        bool challengerVote = merkleStatementContract.verifyMerkle(
+            claim.proof.merkleView,
+            claim.proof.initialMerkleQueue,
+            claim.proof.height,
+            claim.proof.expectedRoot
         );
 
-        if (canVote[proofVerifier] && verifiedBy == address(0x0) && verificationTimestamp == 0) {
-            isValidProof[proofHash] = ProofVerificationClaim({
-                isValid: isValid,
-                verifiedBy: proofVerifier,
-                verificationTimestamp: block.timestamp
-            });
-        }
-    }
-
-    function verifyERC20(
-        bytes calldata proof,
-        ERC20 token,
-        uint reward
-    ) external payable returns (bool, PROOF_STATUS) {
-        bytes32 proofHash = keccak256(proof);
-        if (
-            isValidProof[proofHash].verifiedBy == address(0x0) &&
-            isValidProof[proofHash].verificationTimestamp == 0
-        ) {
-            IVerifier verifier = getProofVerificationContract(proof);
-            bool isValid = verifier.verify(proof);
-
-            isValidProof[proofHash] = ProofVerificationClaim({
-                isValid: isValid,
-                verifiedBy: address(0x1),
-                verificationTimestamp: 1
-            });
-
-            emit ProofVerificationClaimEvent(
-                proofHash,
-                isValid,
-                reward,
-                token,
-                block.timestamp + CHALLENGE_PERIOD
-            );
-            return (isValid, PROOF_STATUS.FINALISED);
+        if (challengerVote != claim.isValid) {
+            slash(claim.verifiedBy);
+            claim.isValid = challengerVote;
+            claim.verifiedBy = msg.sender;
+            claim.verificationTimestamp = block.timestamp;
+            uint256 rewardAmount = calculateReward();
+            challengerRewards[msg.sender] += rewardAmount;
+            emit ProofChallenged(proofId, msg.sender, challengerVote, "MERKLE");
         } else {
-            // Escrow the reward in ERC20 token from the prover in the ProofRegistry
-            token.transferFrom(msg.sender, address(this), reward);
-
-            ProofVerificationClaim memory proofWitness = isValidProof[
-                proofHash
-            ];
-            (bool isValid, address verifiedBy, uint verificationTimestamp) = (
-                proofWitness.isValid,
-                proofWitness.verifiedBy,
-                proofWitness.verificationTimestamp
-            );
-
-            if (verifiedBy == address(0x1) && verificationTimestamp == 1) {
-                return (isValid, PROOF_STATUS.FINALISED);
-            } else if (
-                block.timestamp >= verificationTimestamp + CHALLENGE_PERIOD
-            ) {
-                return (isValid, PROOF_STATUS.FINALISED);
-            } else {
-                claims[proofHash][verifiedBy] = RewardData({
-                    reward: reward,
-                    token: token,
-                    finalisationTimestamp: verificationTimestamp +
-                        CHALLENGE_PERIOD
-                });
-                return (isValid, PROOF_STATUS.RECEIVED);
-            }
+            revert InvalidChallenge();
         }
     }
 
-    function verify(
-        bytes calldata proof
+    function challengeFriProof(bytes32 proofId) external {
+        FriProofVerificationClaim storage claim = friVerificationClaims[
+            proofId
+        ];
+        if (claim.verifiedBy == address(0)) {
+            revert ProofNotRegistered();
+        }
+        if (claim.verifiedBy == address(0x1)) {
+            revert ProofVerifiedOnChain();
+        }
+        if (block.timestamp >= claim.verificationTimestamp + CHALLENGE_PERIOD) {
+            revert ChallengePeriodPassed();
+        }
+        if (msg.sender == claim.verifiedBy) {
+            revert ChallengerSameAsVerifier();
+        }
+
+        bool challengerVote = friStatementContract.verifyFRI(
+            claim.proof.proof,
+            claim.proof.friQueue,
+            claim.proof.evaluationPoint,
+            claim.proof.friStepSize,
+            claim.proof.expectedRoot
+        );
+
+        if (challengerVote != claim.isValid) {
+            slash(claim.verifiedBy);
+            claim.isValid = challengerVote;
+            claim.verifiedBy = msg.sender;
+            claim.verificationTimestamp = block.timestamp;
+            uint256 rewardAmount = calculateReward();
+            challengerRewards[msg.sender] += rewardAmount;
+            emit ProofChallenged(proofId, msg.sender, challengerVote, "FRI");
+        } else {
+            revert InvalidChallenge();
+        }
+    }
+
+    function challengeGPSProof(bytes32 proofId) external {
+        GPSProofVerificationClaim storage claim = gpsVerificationClaims[
+            proofId
+        ];
+        if (claim.verifiedBy == address(0)) {
+            revert ProofNotRegistered();
+        }
+        if (claim.verifiedBy == address(0x1)) {
+            revert ProofVerifiedOnChain();
+        }
+        if (block.timestamp >= claim.verificationTimestamp + CHALLENGE_PERIOD) {
+            revert ChallengePeriodPassed();
+        }
+        if (msg.sender == claim.verifiedBy) {
+            revert ChallengerSameAsVerifier();
+        }
+
+        bool challengerVote = gpsStatementVerification.verifyProofAndRegister(
+            claim.proof.proofParams,
+            claim.proof.proof,
+            claim.proof.taskMetadata,
+            claim.proof.cairoAuxInput,
+            claim.proof.cairoVerifierId
+        );
+
+        if (challengerVote != claim.isValid) {
+            slash(claim.verifiedBy);
+            claim.isValid = challengerVote;
+            claim.verifiedBy = msg.sender;
+            claim.verificationTimestamp = block.timestamp;
+            uint256 rewardAmount = calculateReward();
+            challengerRewards[msg.sender] += rewardAmount;
+            emit ProofChallenged(proofId, msg.sender, challengerVote, "GPS");
+        } else {
+            revert InvalidChallenge();
+        }
+    }
+    function challengeContinuousMemoryPageProof(bytes32 proofId) external {
+        ContinuousMemoryPageProofVerificationClaim
+            storage claim = continuousMemoryPageVerificationClaims[proofId];
+        if (claim.verifiedBy == address(0)) {
+            revert ProofNotRegistered();
+        }
+        if (claim.verifiedBy == address(0x1)) {
+            revert ProofVerifiedOnChain();
+        }
+        if (block.timestamp >= claim.verificationTimestamp + CHALLENGE_PERIOD) {
+            revert ChallengePeriodPassed();
+        }
+        if (msg.sender == claim.verifiedBy) {
+            revert ChallengerSameAsVerifier();
+        }
+
+        (bool challengerVote, , ) = memoryPageFactRegistry
+            .registerContinuousMemoryPage(
+                claim.proof.startAddr,
+                claim.proof.values,
+                claim.proof.z,
+                claim.proof.alpha,
+                claim.proof.prime
+            );
+
+        if (challengerVote != claim.isValid) {
+            slash(claim.verifiedBy);
+            claim.isValid = challengerVote;
+            claim.verifiedBy = msg.sender;
+            claim.verificationTimestamp = block.timestamp;
+            uint256 rewardAmount = calculateReward();
+            challengerRewards[msg.sender] += rewardAmount;
+            emit ProofChallenged(proofId, msg.sender, challengerVote, "CMPP");
+        } else {
+            revert InvalidChallenge();
+        }
+    }
+
+    /**
+     * @dev Calculates the reward amount for a successful challenge.
+     * @return The reward amount.
+     */
+    function calculateReward() internal view returns (uint256) {
+        // Implement the reward calculation logic here
+    }
+
+    /**
+     * @dev Allows a challenger to claim their earned rewards.
+     */
+    function claimReward() external {
+        uint256 rewardAmount = challengerRewards[msg.sender];
+        if (rewardAmount == 0) {
+            revert NoRewardsAvailable();
+        }
+        challengerRewards[msg.sender] = 0;
+        payable(msg.sender).transfer(rewardAmount);
+        emit RewardClaimed(msg.sender, rewardAmount);
+    }
+
+    /**
+     * @dev Slashes a malicious proposer.
+     * @param maliciousProposer The address of the malicious proposer.
+     */
+    function slash(address maliciousProposer) internal {
+        // Implement the slashing logic here
+    }
+
+    /**
+     * @dev Verifies a Merkle proof and returns its status.
+     * @param merkleView The Merkle view of the proof.
+     * @param initialMerkleQueue The initial Merkle queue of the proof.
+     * @param height The height of the Merkle tree.
+     * @param expectedRoot The expected Merkle root.
+     * @param factHash The hash of the fact associated with the proof.
+     * @return isValid The validity of the proof.
+     * @return status The status of the proof (RECEIVED or FINALISED).
+     */
+    function verifyMerkle(
+        uint256[] calldata merkleView,
+        uint256[] calldata initialMerkleQueue,
+        uint256 height,
+        uint256 expectedRoot,
+        bytes32 factHash
     ) external payable returns (bool, PROOF_STATUS) {
         uint reward = msg.value;
-        bytes32 proofHash = keccak256(proof);
-        if (
-            isValidProof[proofHash].verifiedBy == address(0x0) &&
-            isValidProof[proofHash].verificationTimestamp == 0
-        ) {
-            // return the bid since no record for the proof in the registry
-            payable(msg.sender).transfer(reward);
+        MerkelStatementProof memory proof = MerkelStatementProof(
+            merkleView,
+            initialMerkleQueue,
+            height,
+            expectedRoot,
+            factHash
+        );
+        bytes32 proofId = keccak256(abi.encode(proof));
 
-            IVerifier verifier = getProofVerificationContract(proof);
-            bool isValid = verifier.verify(proof);
-
-            isValidProof[proofHash] = ProofVerificationClaim({
-                isValid: isValid,
-                verifiedBy: address(0x1),
-                verificationTimestamp: 1
-            });
-
-            emit ProofVerificationClaimEvent(
-                proofHash,
-                isValid,
-                reward,
-                ERC20(address(0x0)),
-                block.timestamp + CHALLENGE_PERIOD
+        if (verificationClaims[proofId].verifiedBy == address(0)) {
+            bool isValid = merkleStatementContract.verifyMerkle(
+                merkleView,
+                initialMerkleQueue,
+                height,
+                expectedRoot
+            );
+            if (!isValid) {
+                payable(msg.sender).transfer(reward);
+                emit ProofRefunded(proofId, msg.sender, reward);
+                return (false, PROOF_STATUS.FINALISED);
+            }
+            registerMerkleProof(
+                merkleView,
+                initialMerkleQueue,
+                height,
+                expectedRoot,
+                factHash,
+                isValid
             );
             return (isValid, PROOF_STATUS.FINALISED);
         } else {
-            ProofVerificationClaim memory proofWitness = isValidProof[
-                proofHash
-            ];
-            (bool isValid, address verifiedBy, uint verificationTimestamp) = (
-                proofWitness.isValid,
-                proofWitness.verifiedBy,
-                proofWitness.verificationTimestamp
-            );
-
-            if (verifiedBy == address(0x1) && verificationTimestamp == 1) {
-                return (isValid, PROOF_STATUS.FINALISED);
-            } else if (
-                block.timestamp >= verificationTimestamp + CHALLENGE_PERIOD
+            MerkleStatementProofVerificationClaim
+                memory claim = verificationClaims[proofId];
+            if (
+                block.timestamp >=
+                claim.verificationTimestamp + CHALLENGE_PERIOD
             ) {
-                return (isValid, PROOF_STATUS.FINALISED);
+                return (claim.isValid, PROOF_STATUS.FINALISED);
             } else {
-                claims[proofHash][verifiedBy] = RewardData({
-                    reward: reward,
-                    token: ERC20(address(0x0)),
-                    finalisationTimestamp: verificationTimestamp +
-                        CHALLENGE_PERIOD
-                });
-                return (isValid, PROOF_STATUS.RECEIVED);
+                challengerRewards[claim.verifiedBy] += reward;
+                return (claim.isValid, PROOF_STATUS.RECEIVED);
+            }
+        }
+    }
+    function verifyFri(
+        uint256[] calldata proof,
+        uint256[] calldata friQueue,
+        uint256 evaluationPoint,
+        uint256 friStepSize,
+        uint256 expectedRoot
+    ) external payable returns (bool, PROOF_STATUS) {
+        uint reward = msg.value;
+        FriProof memory friProof = FriProof(
+            proof,
+            friQueue,
+            evaluationPoint,
+            friStepSize,
+            expectedRoot
+        );
+        bytes32 proofId = keccak256(abi.encode(friProof));
+
+        if (friVerificationClaims[proofId].verifiedBy == address(0)) {
+            bool isValid = friStatementContract.verifyFRI(
+                proof,
+                friQueue,
+                evaluationPoint,
+                friStepSize,
+                expectedRoot
+            );
+            if (!isValid) {
+                payable(msg.sender).transfer(reward);
+                emit ProofRefunded(proofId, msg.sender, reward);
+                return (false, PROOF_STATUS.FINALISED);
+            }
+            registerFriProof(
+                proof,
+                friQueue,
+                evaluationPoint,
+                friStepSize,
+                expectedRoot,
+                isValid
+            );
+            return (isValid, PROOF_STATUS.FINALISED);
+        } else {
+            FriProofVerificationClaim memory claim = friVerificationClaims[
+                proofId
+            ];
+            if (
+                block.timestamp >=
+                claim.verificationTimestamp + CHALLENGE_PERIOD
+            ) {
+                return (claim.isValid, PROOF_STATUS.FINALISED);
+            } else {
+                challengerRewards[claim.verifiedBy] += reward;
+                return (claim.isValid, PROOF_STATUS.RECEIVED);
             }
         }
     }
 
-    function challenge(bytes calldata proof) external {
-        bytes32 proofHash = keccak256(proof);
-        ProofVerificationClaim memory proofWitness = isValidProof[proofHash];
-        (
-            bool originalProofVote,
-            address originalVerifier,
-            uint originalVerificationTimestamp
-        ) = (
-                proofWitness.isValid,
-                proofWitness.verifiedBy,
-                proofWitness.verificationTimestamp
-            );
+function verifyGPS(GPSProofData calldata gpsProofData) external payable returns (bool, PROOF_STATUS) {
+    uint reward = msg.value;
+    GPSProof memory gpsProof = GPSProof(
+        gpsProofData.proofParams,
+        gpsProofData.proof,
+        gpsProofData.taskMetadata,
+        gpsProofData.cairoAuxInput,
+        gpsProofData.cairoVerifierId
+    );
+    bytes32 proofId = keccak256(abi.encode(gpsProof));
 
-        if (
-            originalVerifier == address(0x0) &&
-            originalVerificationTimestamp == 0
-        ) {
-            revert("No past vote");
-        }
-
-        if (
-            originalVerifier == address(0x1) &&
-            originalVerificationTimestamp == 1
-        ) {
-            revert("Proof was verified on-chain, cannot be challenged");
-        }
-
-        if (
-            block.timestamp > CHALLENGE_PERIOD + originalVerificationTimestamp
-        ) {
-            revert("Challenge period past");
-        }
-
-        IVerifier verifier = getProofVerificationContract(proof);
-
-        bool challengerVote = verifier.verify(proof);
-        address challengerAddress = msg.sender;
-
-        RewardData memory rewardData = claims[proofHash][originalVerifier];
-        (uint bid, ERC20 token) = (rewardData.reward, rewardData.token);
-
-        if (challengerVote == originalProofVote) {
-            revert("Challenger vote same as original verifier");
-        }
-
-        // Original proposer lied about the verification of the proof
-        isValidProof[proofHash] = ProofVerificationClaim({
-            isValid: challengerVote,
-            verifiedBy: address(0),
-            verificationTimestamp: 0
-        });
-        // Pay the challenger
-        if (token != ERC20(address(0x0))) {
-            token.transfer(challengerAddress, bid);
-        } else {
-            payable(challengerAddress).transfer(bid);
-        }
-        // Penalise the original verifier
-        slash(originalVerifier);
-    }
-
-    function claimReward(bytes calldata proof) external {
-        bytes32 proofHash = keccak256(proof);
-        if (
-            claims[proofHash][msg.sender].finalisationTimestamp == 0 &&
-            claims[proofHash][msg.sender].reward == 0
-        ) {
-            revert("not a valid claim");
-        }
-
-        (uint bid, ERC20 token, uint finalisationTimestamp) = (
-            claims[proofHash][msg.sender].reward,
-            claims[proofHash][msg.sender].token,
-            claims[proofHash][msg.sender].finalisationTimestamp
-        );
-
-        if (block.timestamp < finalisationTimestamp) {
-            revert("proof not finalised");
-        }
-
-        // collect reward for verifying proof off-chain
-        if (token != ERC20(address(0x0))) {
-            token.transfer(msg.sender, bid);
-        } else {
-            payable(msg.sender).transfer(bid);
-        }
-    }
-
-    function getProofVerificationContract(
-        bytes calldata proof
-    ) internal pure returns (IVerifier) {
-        // returns the contract address of a verifier contract based on the type of proof
-        return IVerifier(address(0x0));
-    }
-
-    function slash(address maliciousProposer) internal {
-        // penalises the maliciousProposer and evicts them from the precompile service
-        // eigenlayer slashing
+    if (gpsVerificationClaims[proofId].verifiedBy == address(0)) {
+        return _verifyGPSOnChain(gpsProofData, reward, proofId);
+    } else {
+        return _verifyGPSOffChain(proofId, reward);
     }
 }
 
-interface IVerifier {
-    function verify(bytes calldata proof) external returns (bool);
+function _verifyGPSOnChain(GPSProofData calldata gpsProofData, uint reward, bytes32 proofId) internal returns (bool, PROOF_STATUS) {
+    bool isValid = gpsStatementVerification.verifyProofAndRegister(
+        gpsProofData.proofParams,
+        gpsProofData.proof,
+        gpsProofData.taskMetadata,
+        gpsProofData.cairoAuxInput,
+        gpsProofData.cairoVerifierId
+    );
+    if (!isValid) {
+        payable(msg.sender).transfer(reward);
+        emit ProofRefunded(proofId, msg.sender, reward);
+        return (false, PROOF_STATUS.FINALISED);
+    }
+    registerGPSProof(
+        gpsProofData.proofParams,
+        gpsProofData.proof,
+        gpsProofData.taskMetadata,
+        gpsProofData.cairoAuxInput,
+        gpsProofData.cairoVerifierId,
+        isValid
+    );
+    return (isValid, PROOF_STATUS.FINALISED);
+}
+
+function _verifyGPSOffChain(bytes32 proofId, uint reward) internal returns (bool, PROOF_STATUS) {
+    GPSProofVerificationClaim memory claim = gpsVerificationClaims[proofId];
+    if (block.timestamp >= claim.verificationTimestamp + CHALLENGE_PERIOD) {
+        return (claim.isValid, PROOF_STATUS.FINALISED);
+    } else {
+        challengerRewards[claim.verifiedBy] += reward;
+        return (claim.isValid, PROOF_STATUS.RECEIVED);
+    }
+}
+    function verifyContinuousMemoryPage(
+        uint256 startAddr,
+        uint256[] memory values,
+        uint256 z,
+        uint256 alpha,
+        uint256 prime
+    ) external payable returns (bool, PROOF_STATUS) {
+        uint reward = msg.value;
+        ContinuousMemoryPageProof memory proof = ContinuousMemoryPageProof(
+            startAddr,
+            values,
+            z,
+            alpha,
+            prime
+        );
+        bytes32 proofId = keccak256(abi.encode(proof));
+
+        if (
+            continuousMemoryPageVerificationClaims[proofId].verifiedBy ==
+            address(0)
+        ) {
+            (bool isValid, , ) = memoryPageFactRegistry
+                .registerContinuousMemoryPage(
+                    startAddr,
+                    values,
+                    z,
+                    alpha,
+                    prime
+                );
+            if (!isValid) {
+                payable(msg.sender).transfer(reward);
+                emit ProofRefunded(proofId, msg.sender, reward);
+                return (false, PROOF_STATUS.FINALISED);
+            }
+            registerContinuousMemoryPageProof(
+                startAddr,
+                values,
+                z,
+                alpha,
+                prime,
+                isValid
+            );
+            return (isValid, PROOF_STATUS.FINALISED);
+        } else {
+            ContinuousMemoryPageProofVerificationClaim
+                memory claim = continuousMemoryPageVerificationClaims[proofId];
+            if (
+                block.timestamp >=
+                claim.verificationTimestamp + CHALLENGE_PERIOD
+            ) {
+                return (claim.isValid, PROOF_STATUS.FINALISED);
+            } else {
+                challengerRewards[claim.verifiedBy] += reward;
+                return (claim.isValid, PROOF_STATUS.RECEIVED);
+            }
+        }
+    }
 }
