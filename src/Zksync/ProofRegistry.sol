@@ -205,9 +205,3 @@ interface IGetVerifier {
 interface IEigenLayer{
     function isOperator(address _operator) external returns(bool);
 }
-
-interface IEigenLayerSlasher{
-    function optIntoSlashing () external {
-
-    }
-}
