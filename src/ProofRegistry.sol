@@ -96,10 +96,6 @@ contract ProofRegistry {
         bool isValid
     ) external {
         address proofVerifier = msg.sender;
-        // Checking if sender is an operator on eigen layer
-        // 0x39053D51B77DC0d36036Fc1fCc8Cb819df8Ef37A Eigenlayer main contract
-    //     bool valid = IEigenLayer(0x39053D51B77DC0d36036Fc1fCc8Cb819df8Ef37A).isOperator(proofVerifier);
-    //    require(valid == true, "NOT_AN_OPERATOR");
         bytes memory proof = abi.encode(_publicInputs, _proof, _recursiveAggregationInput);
         bytes32 proofHash = keccak256(proof);
         ProofVerificationClaim memory proofWitness = isValidProof[proofHash];
@@ -191,10 +187,7 @@ contract ProofRegistry {
     }
 
     function slash(address maliciousProposer) internal {
-        // address slasherContract = 0xD92145c07f8Ed1D392c1B88017934E301CC1c3Cd;
-        // IEigenLayerSlasher(slasherContract).optIntoSlashing(maliciousProposer);
-        // penalises the maliciousProposer and evicts them from the precompile service
-        // eigenlayer slashing
+
     }
 }
 
