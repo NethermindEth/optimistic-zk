@@ -9,8 +9,6 @@ contract ProofRegistry {
         FINALISED
     }
 
-   
-
     struct ProofVerificationClaim {
         bool isValid;
         address verifiedBy;
@@ -39,8 +37,6 @@ contract ProofRegistry {
         CHALLENGE_PERIOD = challengePeriod;
     }
 
-
-
     function verifyERC20(
         uint256[] calldata _publicInputs,
         uint256[] calldata _proof,
@@ -49,19 +45,15 @@ contract ProofRegistry {
         uint256 reward
     ) external payable returns (bool, PROOF_STATUS) {
         // ProofData memory proof = ProofData(_publicInputs, _proof, _recursiveAggregationInput);
-  bytes memory proof = abi.encode(_publicInputs, _proof, _recursiveAggregationInput);
+        bytes memory proof = abi.encode(_publicInputs, _proof, _recursiveAggregationInput);
         bytes32 proofHash = keccak256(proof);
 
         if (isValidProof[proofHash].verifiedBy == address(0x0) && isValidProof[proofHash].verificationTimestamp == 0) {
             IVerifier verifier = getProofVerificationContract();
             bool isValid = verifier.verify(_publicInputs, _proof, _recursiveAggregationInput);
 
-            isValidProof[proofHash] = ProofVerificationClaim({
-             
-                isValid: isValid,
-                verifiedBy: address(0x1),
-                verificationTimestamp: 1
-            });
+            isValidProof[proofHash] =
+                ProofVerificationClaim({isValid: isValid, verifiedBy: address(0x1), verificationTimestamp: 1});
 
             emit ProofVerificationClaimEvent(proofHash, reward, token, block.timestamp + CHALLENGE_PERIOD);
             return (isValid, PROOF_STATUS.FINALISED);
@@ -121,7 +113,7 @@ contract ProofRegistry {
 
         ProofVerificationClaim memory proofWitness = isValidProof[proofHash];
         (bool originalProofVote, address originalVerifier, uint256 originalVerificationTimestamp) =
-            ( proofWitness.isValid, proofWitness.verifiedBy, proofWitness.verificationTimestamp);
+            (proofWitness.isValid, proofWitness.verifiedBy, proofWitness.verificationTimestamp);
 
         if (originalVerifier == address(0x0) && originalVerificationTimestamp == 0) {
             revert("No past vote");
@@ -140,8 +132,8 @@ contract ProofRegistry {
         bool challengerVote = verifier.verify(_publicInputs, _proof, _recursiveAggregationInput);
         address challengerAddress = msg.sender;
 
-    RewardData memory rewardData = claims[proofHash][originalVerifier];
-        (uint bid, ERC20 token) = (rewardData.reward, rewardData.token);
+        RewardData memory rewardData = claims[proofHash][originalVerifier];
+        (uint256 bid, ERC20 token) = (rewardData.reward, rewardData.token);
 
         if (challengerVote == originalProofVote) {
             revert("Challenger vote same as original verifier");
@@ -186,9 +178,7 @@ contract ProofRegistry {
         return IVerifier(_verifierContract);
     }
 
-    function slash(address maliciousProposer) internal {
-
-    }
+    function slash(address maliciousProposer) internal {}
 }
 
 interface IVerifier {
@@ -202,6 +192,7 @@ interface IVerifier {
 interface IGetVerifier {
     function getVerifier() external returns (address);
 }
-interface IEigenLayer{
-    function isOperator(address _operator) external returns(bool);
+
+interface IEigenLayer {
+    function isOperator(address _operator) external returns (bool);
 }
