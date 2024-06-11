@@ -7,8 +7,7 @@ import "./interface/IEigenLayer.sol";
 import "./interface/IStrategy.sol";
 
 contract EigenLayerAVS {
-
-         /**
+    /**
      * @notice Represents a single supported strategy.
      * @custom:field strategy   The strategy contract
      * @custom:field multiplier The stake multiplier, to weight strategy against others
@@ -17,6 +16,7 @@ contract EigenLayerAVS {
         IStrategy strategy;
         uint96 multiplier;
     }
+
     StrategyParam[] internal _strategyParams;
 
     // EigenLayer core AVSDirectory
@@ -26,7 +26,6 @@ contract EigenLayerAVS {
 
     constructor(address serviceManager_) {
         _serviceManager = IEigenServiceManager(serviceManager_);
-     
     }
 
     function updateMetadataURI(string calldata metadataURI_) external {
@@ -65,15 +64,15 @@ contract EigenLayerAVS {
         return _getRestakeableStrategies();
     }
 
-        /**
+    /**
      * @notice Set the strategy parameters.
      * @param params The strategy parameters
      */
     function setStrategyParams(StrategyParam[] calldata params) external {
         _setStrategyParams(params);
     }
-        
-        function _setStrategyParams(StrategyParam[] calldata params) internal {
+
+    function _setStrategyParams(StrategyParam[] calldata params) internal {
         delete _strategyParams;
 
         for (uint256 i = 0; i < params.length;) {
@@ -97,12 +96,11 @@ contract EigenLayerAVS {
         // emit StrategyParamsSet(params);
     }
 
-
     function getRestakeableStrategies() external view returns (address[] memory) {
         return _getRestakeableStrategies();
     }
 
-       /**
+    /**
      * @notice Returns the list of restakeable strategy addresses
      */
     function _getRestakeableStrategies() internal view returns (address[] memory) {
