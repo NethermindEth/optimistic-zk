@@ -6,7 +6,7 @@ pragma solidity ^0.8.13;
  * @author Layr Labs, Inc.
  * @notice Terms of Service: https://docs.eigenlayer.xyz/overview/terms-of-service
  */
-interface ISignatureUtils {
+interface ISignatureUtilsData {
     // @notice Struct that bundles together a signature and an expiration time for the signature. Used primarily for stack management.
     struct SignatureWithExpiry {
         // the signature itself, formatted as a single bytes object

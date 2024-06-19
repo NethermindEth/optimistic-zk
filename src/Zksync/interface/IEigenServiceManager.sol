@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
-import "./ISignatureUtils.sol";
+import "./ISignatureUtilsData.sol";
 
 interface IEigenServiceManager {
     // Below 3 functions are just proxies to the same-named functions in the AVSDirectory
     function registerOperatorToAVS(
         address operator,
-        ISignatureUtils.SignatureWithSaltAndExpiry memory operatorSignature
+        ISignatureUtilsData.SignatureWithSaltAndExpiry memory operatorSignature
     ) external;
 
     function deregisterOperatorFromAVS(address operator) external;
