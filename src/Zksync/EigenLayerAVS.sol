@@ -48,20 +48,15 @@ contract EigenLayerAVS is ServiceManagerBase {
         ISignatureUtils.SignatureWithSaltAndExpiry memory operatorSignature_
     ) public override {
         // must be a registered operator on Eigen
-        require(operator_ == msg.sender, "NOT_OPERATOR");
-        bool eigenOperator = checkOperator(operator_);
-        require(eigenOperator, "NOT_AN_OPERATOR");
+    
+
         avsDirectory.registerOperatorToAVS(operator_, operatorSignature_);
         // white list the operator on my contract
         operatorActive[operator_] = true;
     }
 
     function deregisterOperatorFromAVS(address operator_) public override {
-        // must be a registered operator on Eigen
-        // must be whitelisted on my contract
-        require(operator_ == msg.sender, "NOT_OPERATOR");
-        bool eigenOperator = checkOperator(operator_);
-        require(eigenOperator, "NOT_AN_OPERATOR");
+
         avsDirectory.deregisterOperatorFromAVS(operator_);
         operatorActive[operator_] = false;
     }
